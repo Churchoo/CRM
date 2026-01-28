@@ -106,12 +106,13 @@ class EmailHandler:
         except Exception as e:
             return False, f"Connection failed: {str(e)}"
     
-    def send_birthday_email(self, customer: Dict) -> tuple[bool, str]:
+    def send_birthday_email(self, customer: Dict, template: str = None) -> tuple[bool, str]:
         """
         Send a birthday email to a customer
         
         Args:
             customer: Customer dictionary with 'name' and 'email' keys
+            template: Optional message template string. '{name}' will be replaced.
             
         Returns:
             Tuple of (success: bool, message: str)
@@ -122,10 +123,17 @@ class EmailHandler:
         if not email:
             return False, "Customer has no email address"
         
-        # Birthday email template
+        # Birthday email template subject
         subject = f"🎉 Happy Birthday, {name.split()[0]}!"
         
-        body = f"""
+        if template:
+            body = template.replace("{name}", name)
+            # Detect if template is HTML
+            is_html = "<html>" in body.lower() or "<body>" in body.lower()
+        else:
+            # Default HTML template (legacy/fallback)
+            is_html = True
+            body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
@@ -146,7 +154,7 @@ class EmailHandler:
         </html>
         """
         
-        return self.send_email(email, subject, body, html=True)
+        return self.send_email(email, subject, body, html=is_html)
     
     @staticmethod
     def get_common_smtp_settings() -> Dict[str, Dict]:
