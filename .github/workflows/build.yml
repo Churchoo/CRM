@@ -2,17 +2,35 @@ name: Build Executables
 
 on:
   push:
+    branches: [ master ]
     tags:
-      - 'v*'  # Trigger on version tags like v1.0.0
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
+      - 'v*'
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Run test suite
+      run: python test_suite.py
+
   build-windows:
+    needs: test
     runs-on: windows-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -28,19 +46,23 @@ jobs:
     - name: Build Windows executable
       run: python build_exe.py
     
+    - name: Verify Windows executable
+      run: |
+        ./dist/CRM.exe --version
+    
     - name: Upload Windows artifact
       uses: actions/upload-artifact@v4
       with:
         name: CRM-Windows
         path: dist/CRM.exe
-        retention-days: 90
+        retention-days: 7
 
   build-macos:
+    needs: test
     runs-on: macos-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -66,31 +88,30 @@ jobs:
           --noconfirm \
           crm_app.py
     
-    - name: Create DMG (optional)
+    - name: Verify macOS application
       run: |
-        # Create a simple DMG for easier distribution
+        # Run the binary inside the app bundle
+        ./dist/CRM.app/Contents/MacOS/CRM --version
+    
+    - name: Create DMG
+      run: |
         mkdir -p dist/dmg
         cp -r "dist/CRM.app" dist/dmg/
         hdiutil create -volname "CRM Installer" -srcfolder dist/dmg -ov -format UDZO dist/CRM.dmg
     
-    - name: Upload macOS app artifact
+    - name: Upload macOS artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: CRM-macOS-app
-        path: dist/CRM.app
-        retention-days: 90
-    
-    - name: Upload macOS DMG artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: CRM-macOS-dmg
-        path: dist/CRM.dmg
-        retention-days: 90
+        name: CRM-macOS
+        path: |
+          dist/CRM.dmg
+          dist/CRM.app
+        retention-days: 7
 
   create-release:
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
     - name: Download Windows artifact
@@ -99,10 +120,10 @@ jobs:
         name: CRM-Windows
         path: ./artifacts/windows
     
-    - name: Download macOS DMG artifact
+    - name: Download macOS artifact
       uses: actions/download-artifact@v4
       with:
-        name: CRM-macOS-dmg
+        name: CRM-macOS
         path: ./artifacts/macos
     
     - name: Create Release
@@ -111,6 +132,7 @@ jobs:
         files: |
           ./artifacts/windows/CRM.exe
           ./artifacts/macos/CRM.dmg
+          ./artifacts/macos/CRM.app
         draft: false
         prerelease: false
         generate_release_notes: true

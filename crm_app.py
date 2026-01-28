@@ -12,9 +12,16 @@ from utils import ConfigManager
 from gui import CRMApp
 
 
+VERSION = "1.1.0"
+
 def main():
     """Main application entry point"""
-    print("Starting CRM Application...")
+    # Check for command line arguments
+    if "--version" in sys.argv:
+        print(f"CRM Application Version {VERSION}")
+        return
+
+    print(f"Starting CRM Application v{VERSION}...")
     
     # Initialize configuration
     config = ConfigManager("config.json")
