@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional, Dict
 import re
+import os
 
 
 class EmailHandler:
@@ -202,8 +203,11 @@ def test_email():
     print(f"✓ Invalid email test: {not handler.validate_email('invalid-email')}")
     
     # Test configuration check
-    success, msg = handler.test_connection()
-    print(f"Connection test (no config): {msg}")
+    if os.environ.get('GITHUB_ACTIONS'):
+        print("! Running in CI (GitHub Actions): Skipping live connection test")
+    else:
+        success, msg = handler.test_connection()
+        print(f"Connection test (no config): {msg}")
     
     # Show common SMTP settings
     print("\n✓ Common SMTP settings available:")
