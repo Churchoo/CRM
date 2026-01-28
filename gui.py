@@ -210,20 +210,12 @@ class CRMApp:
         ttk.Entry(details_frame, textvariable=self.phone_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         row += 1
         
-        # Mandate
-        ttk.Label(details_frame, text="Mandate:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.mandate_var = tk.IntVar()
-        ttk.Checkbutton(details_frame, text="Active", variable=self.mandate_var).grid(row=row, column=1, sticky=tk.W, pady=5, padx=5)
-        row += 1
-        
-        # Mandate Expiry
-        ttk.Label(details_frame, text="Mandate Expiry:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.mandate_expiry_entry = DateEntry(details_frame, width=37, background='darkgreen',
-                                       foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
-        self.mandate_expiry_entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
         # Notes
+        ttk.Label(details_frame, text="Notes:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5, padx=5)
+        self.notes_text = tk.Text(details_frame, width=40, height=8, wrap=tk.WORD)
+        self.notes_text.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=5)
+        details_frame.rowconfigure(row, weight=1)
+        row += 1
         ttk.Label(details_frame, text="Notes:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5, padx=5)
         self.notes_text = tk.Text(details_frame, width=40, height=8, wrap=tk.WORD)
         self.notes_text.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=5)
@@ -237,12 +229,16 @@ class CRMApp:
         prop_container = ttk.Frame(details_frame)
         prop_container.grid(row=row, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
         
-        prop_columns = ("ERF", "Type")
+        prop_columns = ("ERF", "Type", "Mandate", "Expiry")
         self.property_tree = ttk.Treeview(prop_container, columns=prop_columns, show="headings", height=4)
         self.property_tree.heading("ERF", text="ERF Number")
         self.property_tree.heading("Type", text="Land Type")
-        self.property_tree.column("ERF", width=150)
-        self.property_tree.column("Type", width=150)
+        self.property_tree.heading("Mandate", text="Mandate")
+        self.property_tree.heading("Expiry", text="Expiry")
+        self.property_tree.column("ERF", width=100)
+        self.property_tree.column("Type", width=100)
+        self.property_tree.column("Mandate", width=80)
+        self.property_tree.column("Expiry", width=100)
         
         prop_scroll = ttk.Scrollbar(prop_container, orient=tk.VERTICAL, command=self.property_tree.yview)
         self.property_tree.configure(yscrollcommand=prop_scroll.set)
@@ -339,21 +335,12 @@ class CRMApp:
         self.surname_var.set(customer.get('surname', ''))
         self.email_var.set(customer['email'])
         self.phone_var.set(customer['phone'] or "")
-        self.mandate_var.set(customer.get('mandate', 0))
         
         if customer['birthday']:
             try:
                 self.birthday_entry.set_date(datetime.strptime(customer['birthday'], "%Y-%m-%d"))
             except:
                 pass
-        
-        if customer.get('mandate_expiry'):
-            try:
-                self.mandate_expiry_entry.set_date(datetime.strptime(customer['mandate_expiry'], "%Y-%m-%d"))
-            except:
-                pass
-        else:
-            self.mandate_expiry_entry.set_date(datetime.now())
         
         self.notes_text.delete("1.0", tk.END)
         if customer['notes']:
@@ -374,9 +361,7 @@ class CRMApp:
         self.surname_var.set("")
         self.email_var.set("")
         self.phone_var.set("")
-        self.mandate_var.set(0)
         self.birthday_entry.set_date(datetime.now())
-        self.mandate_expiry_entry.set_date(datetime.now())
         self.notes_text.delete("1.0", tk.END)
         
         # Properties
@@ -421,21 +406,17 @@ class CRMApp:
         birthday = self.birthday_entry.get_date().strftime("%Y-%m-%d")
         phone = self.phone_var.get().strip()
         notes = self.notes_text.get("1.0", tk.END).strip()
-        mandate = self.mandate_var.get()
-        mandate_expiry = self.mandate_expiry_entry.get_date().strftime("%Y-%m-%d") if mandate else None
         
         try:
             if self.selected_customer_id:
                 # Update existing
                 self.db.update_customer(self.selected_customer_id, first_name=first_name, surname=surname, 
-                                      email=email, birthday=birthday, phone=phone, notes=notes,
-                                      mandate=mandate, mandate_expiry=mandate_expiry)
+                                      email=email, birthday=birthday, phone=phone, notes=notes)
                 messagebox.showinfo("Success", "Customer updated successfully")
                 self.set_status(f"Updated: {first_name} {surname}")
             else:
                 # Add new
-                customer_id = self.db.add_customer(first_name, surname, email, birthday, phone, notes,
-                                                 mandate, mandate_expiry)
+                customer_id = self.db.add_customer(first_name, surname, email, birthday, phone, notes)
                 self.selected_customer_id = customer_id
                 messagebox.showinfo("Success", "Customer added successfully")
                 self.set_status(f"Added: {first_name} {surname}")
@@ -695,9 +676,9 @@ class CRMApp:
         """Check for expiring mandates on startup and notify if found"""
         expiring = self.db.get_expiring_mandates(2) # 2 months
         if expiring:
-            msg = f"Attention: {len(expiring)} mandate(s) are expiring within the next 2 months:\n\n"
-            for c in expiring:
-                msg += f"• {c['first_name']} {c['surname']} (Expires: {c['mandate_expiry']})\n"
+            msg = f"Attention: {len(expiring)} property mandate(s) are expiring within the next 2 months:\n\n"
+            for p in expiring:
+                msg += f"• {p['first_name']} {p['surname']} - ERF: {p['erf_number']} (Expires: {p['mandate_expiry']})\n"
             msg += "\nWould you like to view the mandate management tool?"
             
             if messagebox.askyesno("Expiring Mandates", msg):
@@ -718,15 +699,17 @@ class CRMApp:
         frame.pack(fill=tk.BOTH, expand=True)
         
         # Treeview for mandates
-        columns = ("Name", "Expiry", "Status")
+        columns = ("Name", "ERF", "Expiry", "Status")
         tree = ttk.Treeview(frame, columns=columns, show="headings")
         tree.heading("Name", text="Customer Name")
+        tree.heading("ERF", text="ERF Number")
         tree.heading("Expiry", text="Expiry Date")
         tree.heading("Status", text="Status")
         
-        tree.column("Name", width=250)
-        tree.column("Expiry", width=150)
-        tree.column("Status", width=150)
+        tree.column("Name", width=150)
+        tree.column("ERF", width=100)
+        tree.column("Expiry", width=100)
+        tree.column("Status", width=100)
         
         scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
@@ -736,15 +719,18 @@ class CRMApp:
         
         # Load data
         all_active = self.db.get_valid_mandates()
-        expiring_ids = [c['id'] for c in self.db.get_expiring_mandates(2)]
+        # Use property IDs to identify expiring ones
+        expiring_props = self.db.get_expiring_mandates(2)
+        expiring_ids = [p['id'] for p in expiring_props]
         
-        for c in all_active:
-            name = f"{c['first_name']} {c['surname']}"
-            expiry = c['mandate_expiry'] or "N/A"
-            status = "Expiring Soon!" if c['id'] in expiring_ids else "Valid"
+        for p in all_active:
+            name = f"{p['first_name']} {p['surname']}"
+            erf = p['erf_number']
+            expiry = p['mandate_expiry'] or "N/A"
+            status = "Expiring Soon!" if p['id'] in expiring_ids else "Valid"
             
-            item = tree.insert("", tk.END, values=(name, expiry, status))
-            if c['id'] in expiring_ids:
+            item = tree.insert("", tk.END, values=(name, erf, expiry, status))
+            if p['id'] in expiring_ids:
                 tree.item(item, tags=('expiring',))
         
         tree.tag_configure('expiring', foreground='red')
@@ -823,7 +809,9 @@ class CRMApp:
         if self.current_customer_id:
             properties = self.db.get_properties(self.current_customer_id)
             for prop in properties:
-                self.property_tree.insert("", tk.END, iid=prop['id'], values=(prop['erf_number'], prop['land_type']))
+                mandate_str = "Yes" if prop['mandate'] else "No"
+                expiry_str = prop['mandate_expiry'] if prop['mandate'] and prop['mandate_expiry'] else "-"
+                self.property_tree.insert("", tk.END, iid=prop['id'], values=(prop['erf_number'], prop['land_type'], mandate_str, expiry_str))
 
     def manual_add_property(self):
         """Show dialog to add a property"""
@@ -850,18 +838,30 @@ class CRMApp:
         ttk.Label(main_frame, text="Land Type:").pack(anchor=tk.W, pady=(0, 5))
         type_var = tk.StringVar(value="Residential")
         type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=["Vacant", "Residential", "Agricultural", "Industrial"], state="readonly")
-        type_combo.pack(fill=tk.X, pady=(0, 20))
+        type_combo.pack(fill=tk.X, pady=(0, 15))
+        
+        # Mandate fields
+        mandate_var = tk.IntVar(value=0)
+        mandate_cb = ttk.Checkbutton(main_frame, text="Active Mandate", variable=mandate_var)
+        mandate_cb.pack(anchor=tk.W, pady=(0, 5))
+        
+        ttk.Label(main_frame, text="Mandate Expiry:").pack(anchor=tk.W, pady=(0, 5))
+        expiry_entry = DateEntry(main_frame, width=30, background='darkgreen',
+                                foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+        expiry_entry.pack(fill=tk.X, pady=(0, 20))
         
         def save():
             erf = erf_var.get().strip()
             land_type = type_var.get()
+            mandate = mandate_var.get()
+            expiry = expiry_entry.get_date().strftime("%Y-%m-%d") if mandate else ""
             
             if not erf:
                 messagebox.showerror("Error", "ERF Number is required.")
                 return
                 
             try:
-                self.db.add_property(self.current_customer_id, erf, land_type)
+                self.db.add_property(self.current_customer_id, erf, land_type, mandate, expiry)
                 self.refresh_property_list()
                 dialog.destroy()
             except Exception as e:
