@@ -199,8 +199,8 @@ def test_email():
     handler = EmailHandler()
     
     # Test email validation
-    print(f"✓ Valid email test: {handler.validate_email('test@example.com')}")
-    print(f"✓ Invalid email test: {not handler.validate_email('invalid-email')}")
+    print(f"[OK] Valid email test: {handler.validate_email('test@example.com')}")
+    print(f"[OK] Invalid email test: {not handler.validate_email('invalid-email')}")
     
     # Test configuration check
     if os.environ.get('GITHUB_ACTIONS'):
@@ -210,11 +210,11 @@ def test_email():
         print(f"Connection test (no config): {msg}")
     
     # Show common SMTP settings
-    print("\n✓ Common SMTP settings available:")
+    print("\n[OK] Common SMTP settings available:")
     for provider, settings in handler.get_common_smtp_settings().items():
         print(f"  - {provider}: {settings['server']}:{settings['port']}")
     
-    print("\n✓ Email handler tests passed!")
+    print("\n[OK] Email handler tests passed!")
 
 
 if __name__ == "__main__":

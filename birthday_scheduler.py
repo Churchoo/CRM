@@ -214,23 +214,23 @@ def test_scheduler():
     email = MockEmailHandler()
     scheduler = BirthdayScheduler(db, email, check_time="09:00")
     
-    print(f"✓ Scheduler created with check time: {scheduler.check_time}")
+    print(f"[OK] Scheduler created with check time: {scheduler.check_time}")
     
     # Test manual check
     results = scheduler.manual_check()
-    print(f"✓ Manual check completed: {results['sent']} sent, {results['failed']} failed")
+    print(f"[OK] Manual check completed: {results['sent']} sent, {results['failed']} failed")
     
     # Test enable/disable
     scheduler.disable()
-    print(f"✓ Scheduler disabled: {not scheduler.enabled}")
+    print(f"[OK] Scheduler disabled: {not scheduler.enabled}")
     scheduler.enable()
-    print(f"✓ Scheduler enabled: {scheduler.enabled}")
+    print(f"[OK] Scheduler enabled: {scheduler.enabled}")
     
     # Test time update
     scheduler.set_check_time("10:30")
-    print(f"✓ Check time updated to: {scheduler.check_time}")
+    print(f"[OK] Check time updated to: {scheduler.check_time}")
     
-    print("\n✓ Birthday scheduler tests passed!")
+    print("\n[OK] Birthday scheduler tests passed!")
 
 
 if __name__ == "__main__":

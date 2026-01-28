@@ -223,45 +223,45 @@ def test_utils():
     # Test date validation
     assert validate_date("2024-01-27") == True
     assert validate_date("invalid") == False
-    print("✓ Date validation works")
+    print("[OK] Date validation works")
     
     # Test date formatting
     formatted = format_date("2024-01-27", "%Y-%m-%d", "%B %d, %Y")
-    print(f"✓ Date formatting: {formatted}")
+    print(f"[OK] Date formatting: {formatted}")
     
     # Test phone validation
     assert validate_phone("555-123-4567") == True
     assert validate_phone("123") == False
-    print("✓ Phone validation works")
+    print("[OK] Phone validation works")
     
     # Test text truncation
     truncated = truncate_text("This is a very long text that needs truncation", 20)
     assert len(truncated) <= 20
-    print(f"✓ Text truncation: '{truncated}'")
+    print(f"[OK] Text truncation: '{truncated}'")
     
     # Test backup filename generation
     backup_name = get_backup_filename()
     assert "backup" in backup_name
     assert ".db" in backup_name
-    print(f"✓ Backup filename: {backup_name}")
+    print(f"[OK] Backup filename: {backup_name}")
     
     # Test config manager
     config = ConfigManager("test_config.json")
     config.set("test.value", "hello")
     assert config.get("test.value") == "hello"
-    print("✓ Config manager works")
+    print("[OK] Config manager works")
     
     # Test encryption
     encrypted = config.encrypt("secret_password")
     decrypted = config.decrypt(encrypted)
     assert decrypted == "secret_password"
-    print("✓ Encryption/decryption works")
+    print("[OK] Encryption/decryption works")
     
     # Cleanup
     if os.path.exists("test_config.json"):
         os.remove("test_config.json")
     
-    print("\n✓ All utility tests passed!")
+    print("\n[OK] All utility tests passed!")
 
 
 if __name__ == "__main__":
