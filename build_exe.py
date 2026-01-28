@@ -108,12 +108,27 @@ if __name__ == "__main__":
     # Build
     success = build_executable()
     
+    # Check if running in a CI environment (like GitHub Actions)
+    is_ci = os.environ.get('GITHUB_ACTIONS') == 'true'
+    
     if success:
-        print()
-        response = input("Clean up build files? (y/n): ").lower()
-        if response == 'y':
-            print()
+        if is_ci:
+            # In CI, auto-cleanup without asking
+            print("Running in CI: Improving cleanup automatically...")
             clean_build_files()
+        else:
+            print()
+            try:
+                response = input("Clean up build files? (y/n): ").lower()
+                if response == 'y':
+                    print()
+                    clean_build_files()
+            except EOFError:
+                pass
     
     print()
-    input("Press Enter to exit...")
+    if not is_ci:
+        try:
+            input("Press Enter to exit...")
+        except EOFError:
+            pass
