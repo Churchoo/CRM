@@ -30,6 +30,7 @@ class CRMApp:
         
         # Current customer selection
         self.selected_customer_id = None
+        self.current_customer_id = None
         
         # Create UI
         self.create_menu()
@@ -229,6 +230,40 @@ class CRMApp:
         details_frame.rowconfigure(row, weight=1)
         row += 1
         
+        # Properties Section
+        ttk.Label(details_frame, text="Properties:", font=("Arial", 10, "bold")).grid(row=row, column=0, sticky=tk.W, pady=(10, 5), padx=5)
+        row += 1
+        
+        prop_container = ttk.Frame(details_frame)
+        prop_container.grid(row=row, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
+        
+        prop_columns = ("ERF", "Type")
+        self.property_tree = ttk.Treeview(prop_container, columns=prop_columns, show="headings", height=4)
+        self.property_tree.heading("ERF", text="ERF Number")
+        self.property_tree.heading("Type", text="Land Type")
+        self.property_tree.column("ERF", width=150)
+        self.property_tree.column("Type", width=150)
+        
+        prop_scroll = ttk.Scrollbar(prop_container, orient=tk.VERTICAL, command=self.property_tree.yview)
+        self.property_tree.configure(yscrollcommand=prop_scroll.set)
+        
+        self.property_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        prop_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        row += 1
+        
+        prop_btn_frame = ttk.Frame(details_frame)
+        prop_btn_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5, padx=5)
+        
+        self.add_prop_btn = ttk.Button(prop_btn_frame, text="➕ Add Property", command=self.manual_add_property)
+        self.add_prop_btn.pack(side=tk.LEFT, padx=2)
+        self.remove_prop_btn = ttk.Button(prop_btn_frame, text="🗑️ Remove Property", command=self.manual_remove_property)
+        self.remove_prop_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Set buttons state initially (disabled until a customer is selected)
+        self.add_prop_btn.config(state=tk.DISABLED)
+        self.remove_prop_btn.config(state=tk.DISABLED)
+        row += 1
+        
         # Buttons
         button_frame = ttk.Frame(details_frame)
         button_frame.grid(row=row, column=0, columnspan=2, pady=10)
@@ -323,6 +358,14 @@ class CRMApp:
         self.notes_text.delete("1.0", tk.END)
         if customer['notes']:
             self.notes_text.insert("1.0", customer['notes'])
+        
+        # Load Properties
+        self.current_customer_id = customer['id']
+        self.refresh_property_list()
+        
+        # Enable property buttons
+        self.add_prop_btn.config(state=tk.NORMAL)
+        self.remove_prop_btn.config(state=tk.NORMAL)
     
     def clear_form(self):
         """Clear the customer form"""
@@ -335,6 +378,15 @@ class CRMApp:
         self.birthday_entry.set_date(datetime.now())
         self.mandate_expiry_entry.set_date(datetime.now())
         self.notes_text.delete("1.0", tk.END)
+        
+        # Properties
+        for item in self.property_tree.get_children():
+            self.property_tree.delete(item)
+        
+        self.current_customer_id = None
+        self.add_prop_btn.config(state=tk.DISABLED)
+        self.remove_prop_btn.config(state=tk.DISABLED)
+        
         self.set_status("Form cleared")
     
     def add_customer(self):
@@ -763,6 +815,76 @@ class CRMApp:
             self.db.close()
             self.root.destroy()
     
+    def refresh_property_list(self):
+        """Refresh the property tree for the current customer"""
+        for item in self.property_tree.get_children():
+            self.property_tree.delete(item)
+            
+        if self.current_customer_id:
+            properties = self.db.get_properties(self.current_customer_id)
+            for prop in properties:
+                self.property_tree.insert("", tk.END, iid=prop['id'], values=(prop['erf_number'], prop['land_type']))
+
+    def manual_add_property(self):
+        """Show dialog to add a property"""
+        if not self.current_customer_id:
+            messagebox.showwarning("Warning", "Please select a customer first.")
+            return
+            
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Property")
+        dialog.geometry("350x250")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Form
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main_frame, text="ERF Number:").pack(anchor=tk.W, pady=(0, 5))
+        erf_var = tk.StringVar()
+        erf_entry = ttk.Entry(main_frame, textvariable=erf_var, width=30)
+        erf_entry.pack(fill=tk.X, pady=(0, 15))
+        erf_entry.focus_set()
+        
+        ttk.Label(main_frame, text="Land Type:").pack(anchor=tk.W, pady=(0, 5))
+        type_var = tk.StringVar(value="Residential")
+        type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=["Vacant", "Residential", "Agricultural", "Industrial"], state="readonly")
+        type_combo.pack(fill=tk.X, pady=(0, 20))
+        
+        def save():
+            erf = erf_var.get().strip()
+            land_type = type_var.get()
+            
+            if not erf:
+                messagebox.showerror("Error", "ERF Number is required.")
+                return
+                
+            try:
+                self.db.add_property(self.current_customer_id, erf, land_type)
+                self.refresh_property_list()
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to add property: {e}")
+        
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X)
+        ttk.Button(btn_frame, text="Save", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+
+    def manual_remove_property(self):
+        """Remove selected property"""
+        selected = self.property_tree.selection()
+        if not selected:
+            messagebox.showwarning("Warning", "Please select a property to remove.")
+            return
+            
+        if messagebox.askyesno("Confirm", "Are you sure you want to remove this property?"):
+            for item_id in selected:
+                prop_id = int(item_id)
+                self.db.delete_property(prop_id)
+            self.refresh_property_list()
+
     def run(self):
         """Start the application"""
         self.root.mainloop()

@@ -46,6 +46,16 @@ class Database:
                     modified_date TEXT NOT NULL
                 )
             ''')
+            
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS properties (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_id INTEGER NOT NULL,
+                    erf_number TEXT NOT NULL,
+                    land_type TEXT NOT NULL,
+                    FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE
+                )
+            ''')
             self.conn.commit()
         else:
             self._migrate_schema()
@@ -112,6 +122,18 @@ class Database:
             self.cursor.execute("ALTER TABLE customers ADD COLUMN mandate INTEGER DEFAULT 0")
             self.cursor.execute("ALTER TABLE customers ADD COLUMN mandate_expiry TEXT")
             self.conn.commit()
+            
+        # Ensure properties table exists
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS properties (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL,
+                erf_number TEXT NOT NULL,
+                land_type TEXT NOT NULL,
+                FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE
+            )
+        ''')
+        self.conn.commit()
     
     def add_customer(self, first_name: str, surname: str, email: str, birthday: str = None, 
                     phone: str = None, notes: str = None, mandate: int = 0, 
@@ -199,8 +221,32 @@ class Database:
             raise ValueError(f"Customer with email '{updated_email}' already exists")
     
     def delete_customer(self, customer_id: int) -> bool:
-        """Delete a customer by ID"""
+        """Delete a customer and their properties (CASCADE handles this if PRAGMA foreign_keys=ON)"""
+        # Ensure foreign keys are enabled for cascade delete
+        self.cursor.execute('PRAGMA foreign_keys = ON')
         self.cursor.execute('DELETE FROM customers WHERE id = ?', (customer_id,))
+        self.conn.commit()
+        return self.cursor.rowcount > 0
+    
+    # Property Methods
+    
+    def add_property(self, customer_id: int, erf_number: str, land_type: str) -> int:
+        """Add a property to a customer"""
+        self.cursor.execute('''
+            INSERT INTO properties (customer_id, erf_number, land_type)
+            VALUES (?, ?, ?)
+        ''', (customer_id, erf_number, land_type))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_properties(self, customer_id: int) -> List[Dict]:
+        """Get all properties for a customer"""
+        self.cursor.execute('SELECT * FROM properties WHERE customer_id = ?', (customer_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def delete_property(self, property_id: int) -> bool:
+        """Delete a property by ID"""
+        self.cursor.execute('DELETE FROM properties WHERE id = ?', (property_id,))
         self.conn.commit()
         return self.cursor.rowcount > 0
     
@@ -353,6 +399,20 @@ def test_crud():
     
     expiring = db.get_expiring_mandates(3)
     print(f"[OK] Expiring mandates (3 months) found: {len(expiring)}")
+    
+    # Test Properties
+    prop_id1 = db.add_property(id1, "ERF123", "Residential")
+    prop_id2 = db.add_property(id1, "ERF456", "Vacant")
+    print(f"[OK] Added properties with IDs: {prop_id1}, {prop_id2}")
+    
+    props = db.get_properties(id1)
+    print(f"[OK] Retrieved {len(props)} properties for customer {id1}")
+    assert len(props) == 2
+    
+    db.delete_property(prop_id2)
+    props = db.get_properties(id1)
+    print(f"[OK] Total properties after deletion: {len(props)}")
+    assert len(props) == 1
     
     # Delete
     db.delete_customer(id2)
