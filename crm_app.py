@@ -22,7 +22,7 @@ def main():
     # Initialize database
     db_path = config.get("database.path", "customers.db")
     db = Database(db_path)
-    print(f"✓ Database initialized: {db_path}")
+    print(f"[OK] Database initialized: {db_path}")
     
     # Initialize email handler
     email = EmailHandler(
@@ -31,7 +31,7 @@ def main():
         username=config.get("email.username"),
         password=config.decrypt(config.get("email.password", ""))
     )
-    print("✓ Email handler initialized")
+    print("[OK] Email handler initialized")
     
     # Initialize birthday scheduler
     scheduler = BirthdayScheduler(
@@ -45,10 +45,10 @@ def main():
     else:
         scheduler.disable()
     
-    print(f"✓ Birthday scheduler initialized (Check time: {scheduler.check_time})")
+    print(f"[OK] Birthday scheduler initialized (Check time: {scheduler.check_time})")
     
     # Create and run GUI
-    print("✓ Launching GUI...")
+    print("[OK] Launching GUI...")
     app = CRMApp(db, email, scheduler, config)
     app.run()
     

@@ -18,11 +18,11 @@ def build_executable():
     # Check if PyInstaller is installed
     try:
         import PyInstaller
-        print("✓ PyInstaller is installed")
+        print("[OK] PyInstaller is installed")
     except ImportError:
-        print("✗ PyInstaller not found. Installing...")
+        print("[!] PyInstaller not found. Installing...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-        print("✓ PyInstaller installed")
+        print("[OK] PyInstaller installed")
     
     print()
     print("Building executable...")
@@ -52,11 +52,11 @@ def build_executable():
         
         print()
         print("=" * 60)
-        print("✓ Build completed successfully!")
+        print("[OK] Build completed successfully!")
         print("=" * 60)
         print()
         print("Executable location:")
-        print(f"  → {os.path.abspath('dist/CRM.exe')}")
+        print(f"  -> {os.path.abspath('dist/CRM.exe')}")
         print()
         print("You can now distribute the executable file.")
         print("Users can run it without installing Python!")
@@ -68,7 +68,7 @@ def build_executable():
     except subprocess.CalledProcessError as e:
         print()
         print("=" * 60)
-        print("✗ Build failed!")
+        print("[ERROR] Build failed!")
         print("=" * 60)
         print()
         print("Error output:")
@@ -92,14 +92,14 @@ def clean_build_files():
     for dir_name in dirs_to_remove:
         if os.path.exists(dir_name):
             shutil.rmtree(dir_name)
-            print(f"  ✓ Removed {dir_name}/")
+            print(f"  [OK] Removed {dir_name}/")
     
     for file_name in files_to_remove:
         if os.path.exists(file_name):
             os.remove(file_name)
-            print(f"  ✓ Removed {file_name}")
+            print(f"  [OK] Removed {file_name}")
     
-    print("✓ Cleanup complete")
+    print("[OK] Cleanup complete")
 
 
 if __name__ == "__main__":
