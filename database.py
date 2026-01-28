@@ -214,6 +214,29 @@ class Database:
         ''', (search_term, search_term, search_term))
         return [dict(row) for row in self.cursor.fetchall()]
     
+    def get_valid_mandates(self) -> List[Dict]:
+        """Get all customers with an active mandate"""
+        self.cursor.execute('SELECT * FROM customers WHERE mandate = 1 ORDER BY surname, first_name')
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def get_expiring_mandates(self, months: int = 2) -> List[Dict]:
+        """Get customers whose mandate expires within the next N months"""
+        # Calculate cut-off date
+        from datetime import timedelta
+        cutoff_date = (datetime.now() + timedelta(days=months*30)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        self.cursor.execute('''
+            SELECT * FROM customers 
+            WHERE mandate = 1 
+            AND mandate_expiry IS NOT NULL 
+            AND mandate_expiry != ''
+            AND mandate_expiry <= ?
+            AND mandate_expiry >= ?
+            ORDER BY mandate_expiry
+        ''', (cutoff_date, today))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
     def get_birthdays_today(self) -> List[Dict]:
         """Get customers with birthdays today (MM-DD match)"""
         today = datetime.now().strftime("%m-%d")
@@ -323,6 +346,13 @@ def test_crud():
     # Get all
     all_customers = db.get_all_customers()
     print(f"[OK] Total customers: {len(all_customers)}")
+    
+    # Test Mandate Queries
+    valid_mandates = db.get_valid_mandates()
+    print(f"[OK] Valid mandates found: {len(valid_mandates)}")
+    
+    expiring = db.get_expiring_mandates(3)
+    print(f"[OK] Expiring mandates (3 months) found: {len(expiring)}")
     
     # Delete
     db.delete_customer(id2)

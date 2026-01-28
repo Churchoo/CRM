@@ -84,6 +84,8 @@ class CRMApp:
         tools_menu.add_separator()
         tools_menu.add_command(label="Edit Birthday Template", command=self.show_birthday_template_editor)
         tools_menu.add_command(label="Send Birthday Emails", command=self.manual_birthday_check)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Check Mandates", command=self.manual_mandate_check)
         
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -137,17 +139,19 @@ class CRMApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Treeview
-        self.customer_tree = ttk.Treeview(list_container, columns=("FirstName", "Surname", "Email", "Mandate"), 
+        self.customer_tree = ttk.Treeview(list_container, columns=("FirstName", "Surname", "Email", "Mandate", "Expiry"), 
                                          show="tree headings", yscrollcommand=scrollbar.set)
         self.customer_tree.heading("FirstName", text="First Name")
         self.customer_tree.heading("Surname", text="Surname")
         self.customer_tree.heading("Email", text="Email")
         self.customer_tree.heading("Mandate", text="Mandate")
+        self.customer_tree.heading("Expiry", text="Expiry")
         self.customer_tree.column("#0", width=0, stretch=False)
         self.customer_tree.column("FirstName", width=100)
         self.customer_tree.column("Surname", width=100)
         self.customer_tree.column("Email", width=200)
         self.customer_tree.column("Mandate", width=60)
+        self.customer_tree.column("Expiry", width=80)
         
         self.customer_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.customer_tree.yview)
@@ -263,9 +267,10 @@ class CRMApp:
             first = customer.get('first_name', '')
             sur = customer.get('surname', '')
             mandate_status = "Active" if customer.get('mandate') else "Inactive"
+            expiry = customer.get('mandate_expiry', '') if customer.get('mandate') else ""
             
             self.customer_tree.insert("", tk.END, iid=customer['id'],
-                                     values=(first, sur, customer['email'], mandate_status))
+                                     values=(first, sur, customer['email'], mandate_status, expiry))
         
         self.set_status(f"Loaded {len(customers)} customer(s)")
     
@@ -625,7 +630,7 @@ class CRMApp:
                 if results['customers']:
                     msg += "Details:\n"
                     for customer in results['customers']:
-                        status = "✓" if customer['success'] else "✗"
+                        status = "[OK]" if customer['success'] else "[X]"
                         msg += f"{status} {customer['name']}: {customer['message']}\n"
                 
                 # Show results on main thread
@@ -633,6 +638,66 @@ class CRMApp:
             
             # Run in thread to avoid blocking UI
             threading.Thread(target=send, daemon=True).start()
+
+    def check_expiring_mandates_startup(self):
+        """Check for expiring mandates on startup and notify if found"""
+        expiring = self.db.get_expiring_mandates(2) # 2 months
+        if expiring:
+            msg = f"Attention: {len(expiring)} mandate(s) are expiring within the next 2 months:\n\n"
+            for c in expiring:
+                msg += f"• {c['first_name']} {c['surname']} (Expires: {c['mandate_expiry']})\n"
+            msg += "\nWould you like to view the mandate management tool?"
+            
+            if messagebox.askyesno("Expiring Mandates", msg):
+                self.manual_mandate_check()
+
+    def manual_mandate_check(self):
+        """Show mandate management dialog"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Mandate Management")
+        dialog.geometry("600x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Active & Expiring Mandates", style="Title.TLabel").pack(pady=10)
+        
+        # Container for the list
+        frame = ttk.Frame(dialog, padding="10")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Treeview for mandates
+        columns = ("Name", "Expiry", "Status")
+        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree.heading("Name", text="Customer Name")
+        tree.heading("Expiry", text="Expiry Date")
+        tree.heading("Status", text="Status")
+        
+        tree.column("Name", width=250)
+        tree.column("Expiry", width=150)
+        tree.column("Status", width=150)
+        
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Load data
+        all_active = self.db.get_valid_mandates()
+        expiring_ids = [c['id'] for c in self.db.get_expiring_mandates(2)]
+        
+        for c in all_active:
+            name = f"{c['first_name']} {c['surname']}"
+            expiry = c['mandate_expiry'] or "N/A"
+            status = "Expiring Soon!" if c['id'] in expiring_ids else "Valid"
+            
+            item = tree.insert("", tk.END, values=(name, expiry, status))
+            if c['id'] in expiring_ids:
+                tree.item(item, tags=('expiring',))
+        
+        tree.tag_configure('expiring', foreground='red')
+        
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
     
     def backup_database(self):
         """Backup database"""

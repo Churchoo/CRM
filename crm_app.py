@@ -58,6 +58,10 @@ def main():
     # Create and run GUI
     print("[OK] Launching GUI...")
     app = CRMApp(db, email, scheduler, config)
+    
+    # Check for expiring mandates on startup
+    app.check_expiring_mandates_startup()
+    
     app.run()
     
     print("Application closed")
