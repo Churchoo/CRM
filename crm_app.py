@@ -37,7 +37,8 @@ def main():
     scheduler = BirthdayScheduler(
         database=db,
         email_handler=email,
-        check_time=config.get("birthday_scheduler.check_time", "09:00")
+        check_time=config.get("birthday_scheduler.check_time", "09:00"),
+        config_manager=config
     )
     
     if config.get("birthday_scheduler.enabled", True):

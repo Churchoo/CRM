@@ -12,7 +12,7 @@ import logging
 
 
 class BirthdayScheduler:
-    def __init__(self, database, email_handler, check_time: str = "09:00"):
+    def __init__(self, database, email_handler, check_time: str = "09:00", config_manager = None):
         """
         Initialize birthday scheduler
         
@@ -20,10 +20,12 @@ class BirthdayScheduler:
             database: Database instance
             email_handler: EmailHandler instance
             check_time: Time to check for birthdays daily (HH:MM format)
+            config_manager: ConfigManager instance for accessing templates
         """
         self.database = database
         self.email_handler = email_handler
         self.check_time = check_time
+        self.config_manager = config_manager
         self.is_running = False
         self.scheduler_thread = None
         self.enabled = True
@@ -33,22 +35,29 @@ class BirthdayScheduler:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
     
-    def check_and_send_birthday_emails(self) -> dict:
+    def check_and_send_birthday_emails(self, customers_to_send: list = None) -> dict:
         """
         Check for today's birthdays and send emails
+        
+        Args:
+            customers_to_send: Optional list of specific customers to send to.
+                               If None, checks database for today's birthdays.
         
         Returns:
             Dictionary with results: {sent: int, failed: int, customers: list}
         """
         today = datetime.now().date()
         
-        # Prevent duplicate checks on the same day
-        if self.last_check_date == today:
+        # Prevent duplicate checks on the same day if automated
+        if customers_to_send is None and self.last_check_date == today:
             self.logger.info("Birthday check already performed today")
             return {"sent": 0, "failed": 0, "customers": [], "skipped": True}
         
-        self.logger.info("Checking for birthdays today...")
-        customers_with_birthdays = self.database.get_birthdays_today()
+        if customers_to_send is None:
+            self.logger.info("Checking for birthdays today...")
+            customers = self.database.get_birthdays_today()
+        else:
+            customers = customers_to_send
         
         results = {
             "sent": 0,
@@ -57,26 +66,32 @@ class BirthdayScheduler:
             "skipped": False
         }
         
-        if not customers_with_birthdays:
-            self.logger.info("No birthdays today")
-            self.last_check_date = today
+        if not customers:
+            self.logger.info("No birthdays to process")
+            if customers_to_send is None:
+                self.last_check_date = today
             return results
         
-        self.logger.info(f"Found {len(customers_with_birthdays)} birthday(s) today")
+        self.logger.info(f"Processing {len(customers)} birthday(s)")
         
-        for customer in customers_with_birthdays:
-            if not self.enabled:
+        # Get template from config if available
+        template = None
+        if self.config_manager:
+            template = self.config_manager.get("birthday_scheduler.template")
+        
+        for customer in customers:
+            if not self.enabled and customers_to_send is None:
                 self.logger.info("Birthday emails disabled, stopping")
                 break
             
-            success, message = self.email_handler.send_birthday_email(customer)
+            success, message = self.email_handler.send_birthday_email(customer, template=template)
             
             if success:
                 results["sent"] += 1
-                self.logger.info(f"✓ Sent birthday email to {customer['name']}")
+                self.logger.info(f"[OK] Sent birthday email to {customer['name']}")
             else:
                 results["failed"] += 1
-                self.logger.error(f"✗ Failed to send to {customer['name']}: {message}")
+                self.logger.error(f"[ERROR] Failed to send to {customer['name']}: {message}")
             
             results["customers"].append({
                 "name": customer["name"],
@@ -85,7 +100,9 @@ class BirthdayScheduler:
                 "message": message
             })
         
-        self.last_check_date = today
+        if customers_to_send is None:
+            self.last_check_date = today
+            
         return results
     
     def schedule_daily_check(self):
@@ -149,6 +166,10 @@ class BirthdayScheduler:
         """Disable birthday email sending"""
         self.enabled = False
         self.logger.info("Birthday emails disabled")
+    
+    def get_todays_birthdays(self) -> list:
+        """Get customers who have birthdays today"""
+        return self.database.get_birthdays_today()
     
     def manual_check(self) -> dict:
         """

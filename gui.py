@@ -81,7 +81,9 @@ class CRMApp:
         menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Email Settings", command=self.show_email_settings)
         tools_menu.add_command(label="Send Test Email", command=self.send_test_email)
-        tools_menu.add_command(label="Check Birthdays Now", command=self.manual_birthday_check)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Edit Birthday Template", command=self.show_birthday_template_editor)
+        tools_menu.add_command(label="Send Birthday Emails", command=self.manual_birthday_check)
         
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -510,27 +512,76 @@ class CRMApp:
             else:
                 messagebox.showerror("Error", message)
     
-    def manual_birthday_check(self):
-        """Manually trigger birthday check"""
-        def check():
-            results = self.scheduler.manual_check()
-            
-            message = f"Birthday Check Complete:\n\n"
-            message += f"Emails sent: {results['sent']}\n"
-            message += f"Failed: {results['failed']}\n\n"
-            
-            if results['customers']:
-                message += "Details:\n"
-                for customer in results['customers']:
-                    status = "✓" if customer['success'] else "✗"
-                    message += f"{status} {customer['name']}: {customer['message']}\n"
-            else:
-                message += "No birthdays today."
-            
-            messagebox.showinfo("Birthday Check", message)
+    def show_birthday_template_editor(self):
+        """Show dialog to edit birthday email template"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Edit Birthday Template")
+        dialog.geometry("600x450")
+        dialog.transient(self.root)
+        dialog.grab_set()
         
-        # Run in thread to avoid blocking UI
-        threading.Thread(target=check, daemon=True).start()
+        # Center dialog
+        dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 200, self.root.winfo_rooty() + 100))
+        
+        ttk.Label(dialog, text="Birthday Message Template", style="Title.TLabel").pack(pady=10)
+        ttk.Label(dialog, text="Use {name} as a placeholder for the customer's name.", style="Subtitle.TLabel").pack(pady=5)
+        
+        template_text = tk.Text(dialog, width=70, height=12, wrap=tk.WORD, font=("Arial", 10))
+        template_text.pack(pady=10, padx=15, fill=tk.BOTH, expand=True)
+        
+        current_template = self.config.get("birthday_scheduler.template", "")
+        template_text.insert("1.0", current_template)
+        
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=15)
+        
+        def save():
+            new_template = template_text.get("1.0", tk.END).strip()
+            if not new_template:
+                messagebox.showerror("Error", "Template cannot be empty")
+                return
+            
+            self.config.set("birthday_scheduler.template", new_template)
+            messagebox.showinfo("Success", "Birthday template saved successfully!")
+            dialog.destroy()
+            
+        ttk.Button(button_frame, text="💾 Save Template", command=save).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=10)
+
+    def manual_birthday_check(self):
+        """Manually trigger birthday check with interactive confirmation"""
+        customers = self.scheduler.get_todays_birthdays()
+        
+        if not customers:
+            messagebox.showinfo("Birthday Check", "No birthdays found for today.")
+            return
+            
+        # Create confirmation list
+        names = [c['name'] for c in customers]
+        confirm_msg = f"Found {len(customers)} birthday(s) today:\n\n"
+        confirm_msg += "\n".join(f"• {name}" for name in names)
+        confirm_msg += "\n\nDo you want to send birthday emails to these people?"
+        
+        if messagebox.askyesno("Confirm Birthday Emails", confirm_msg):
+            def send():
+                # Use the interactive check results
+                results = self.scheduler.check_and_send_birthday_emails(customers_to_send=customers)
+                
+                msg = f"Birthday Check Complete:\n\n"
+                msg += f"Emails sent: {results['sent']}\n"
+                msg += f"Failed: {results['failed']}\n\n"
+                
+                if results['customers']:
+                    msg += "Details:\n"
+                    for customer in results['customers']:
+                        status = "✓" if customer['success'] else "✗"
+                        msg += f"{status} {customer['name']}: {customer['message']}\n"
+                
+                # Show results on main thread
+                self.root.after(0, lambda: messagebox.showinfo("Birthday Check Results", msg))
+            
+            # Run in thread to avoid blocking UI
+            threading.Thread(target=send, daemon=True).start()
     
     def backup_database(self):
         """Backup database"""
