@@ -58,7 +58,7 @@ class ConfigManager:
             "birthday_scheduler": {
                 "enabled": True,
                 "check_time": "09:00",
-                "template": "Happy Birthday {name}!\n\nWishing you a fantastic day filled with joy and laughter.\n\nBest regards,\nThe Team"
+                "template": "Happy Birthday {first_name}!\n\nWishing you a fantastic day filled with joy and laughter.\n\nBest regards,\nThe Team"
             },
             "database": {
                 "path": "customers.db",

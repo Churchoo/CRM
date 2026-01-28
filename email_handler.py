@@ -111,34 +111,40 @@ class EmailHandler:
         Send a birthday email to a customer
         
         Args:
-            customer: Customer dictionary with 'name' and 'email' keys
-            template: Optional message template string. '{name}' will be replaced.
+            customer: Customer dictionary with 'first_name', 'surname', and 'email' keys
+            template: Optional message template string.
             
         Returns:
             Tuple of (success: bool, message: str)
         """
-        name = customer.get('name', 'Valued Customer')
+        first_name = customer.get('first_name', 'Valued Customer')
+        surname = customer.get('surname', '')
+        full_name = f"{first_name} {surname}".strip()
         email = customer.get('email')
         
         if not email:
             return False, "Customer has no email address"
         
         # Birthday email template subject
-        subject = f"🎉 Happy Birthday, {name.split()[0]}!"
+        subject = f"🎉 Happy Birthday, {first_name}!"
         
         if template:
-            body = template.replace("{name}", name)
+            # Support multiple placeholders
+            body = template.replace("{name}", full_name)
+            body = body.replace("{first_name}", first_name)
+            body = body.replace("{surname}", surname)
+            
             # Detect if template is HTML
             is_html = "<html>" in body.lower() or "<body>" in body.lower()
         else:
-            # Default HTML template (legacy/fallback)
+            # Default HTML template
             is_html = True
             body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
                 <h2 style="color: #4CAF50; text-align: center;">🎂 Happy Birthday! 🎂</h2>
-                <p style="font-size: 16px;">Dear {name},</p>
+                <p style="font-size: 16px;">Dear {first_name},</p>
                 <p style="font-size: 16px;">
                     Wishing you a wonderful birthday filled with joy, laughter, and all the things that make you happy!
                 </p>

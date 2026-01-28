@@ -84,17 +84,21 @@ class BirthdayScheduler:
                 self.logger.info("Birthday emails disabled, stopping")
                 break
             
+            first_name = customer.get('first_name', 'Valued')
+            surname = customer.get('surname', 'Customer')
+            full_name = f"{first_name} {surname}".strip()
+            
             success, message = self.email_handler.send_birthday_email(customer, template=template)
             
             if success:
                 results["sent"] += 1
-                self.logger.info(f"[OK] Sent birthday email to {customer['name']}")
+                self.logger.info(f"[OK] Sent birthday email to {full_name}")
             else:
                 results["failed"] += 1
-                self.logger.error(f"[ERROR] Failed to send to {customer['name']}: {message}")
+                self.logger.error(f"[ERROR] Failed to send to {full_name}: {message}")
             
             results["customers"].append({
-                "name": customer["name"],
+                "name": full_name,
                 "email": customer["email"],
                 "success": success,
                 "message": message

@@ -137,13 +137,17 @@ class CRMApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Treeview
-        self.customer_tree = ttk.Treeview(list_container, columns=("Name", "Email"), 
+        self.customer_tree = ttk.Treeview(list_container, columns=("FirstName", "Surname", "Email", "Mandate"), 
                                          show="tree headings", yscrollcommand=scrollbar.set)
-        self.customer_tree.heading("Name", text="Name")
+        self.customer_tree.heading("FirstName", text="First Name")
+        self.customer_tree.heading("Surname", text="Surname")
         self.customer_tree.heading("Email", text="Email")
+        self.customer_tree.heading("Mandate", text="Mandate")
         self.customer_tree.column("#0", width=0, stretch=False)
-        self.customer_tree.column("Name", width=150)
+        self.customer_tree.column("FirstName", width=100)
+        self.customer_tree.column("Surname", width=100)
         self.customer_tree.column("Email", width=200)
+        self.customer_tree.column("Mandate", width=60)
         
         self.customer_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.customer_tree.yview)
@@ -170,10 +174,16 @@ class CRMApp:
         # Form fields
         row = 1
         
-        # Name
-        ttk.Label(details_frame, text="Name:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.name_var = tk.StringVar()
-        ttk.Entry(details_frame, textvariable=self.name_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        # First Name
+        ttk.Label(details_frame, text="First Name:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
+        self.first_name_var = tk.StringVar()
+        ttk.Entry(details_frame, textvariable=self.first_name_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        row += 1
+        
+        # Surname
+        ttk.Label(details_frame, text="Surname:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
+        self.surname_var = tk.StringVar()
+        ttk.Entry(details_frame, textvariable=self.surname_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         row += 1
         
         # Email
@@ -193,6 +203,19 @@ class CRMApp:
         ttk.Label(details_frame, text="Phone:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
         self.phone_var = tk.StringVar()
         ttk.Entry(details_frame, textvariable=self.phone_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        row += 1
+        
+        # Mandate
+        ttk.Label(details_frame, text="Mandate:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
+        self.mandate_var = tk.IntVar()
+        ttk.Checkbutton(details_frame, text="Active", variable=self.mandate_var).grid(row=row, column=1, sticky=tk.W, pady=5, padx=5)
+        row += 1
+        
+        # Mandate Expiry
+        ttk.Label(details_frame, text="Mandate Expiry:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
+        self.mandate_expiry_entry = DateEntry(details_frame, width=37, background='darkgreen',
+                                       foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+        self.mandate_expiry_entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         row += 1
         
         # Notes
@@ -236,8 +259,13 @@ class CRMApp:
         
         # Add to tree
         for customer in customers:
+             # Use proper fields with fallback for backward compatibility if needed (schema migration handles it though)
+            first = customer.get('first_name', '')
+            sur = customer.get('surname', '')
+            mandate_status = "Active" if customer.get('mandate') else "Inactive"
+            
             self.customer_tree.insert("", tk.END, iid=customer['id'],
-                                     values=(customer['name'], customer['email']))
+                                     values=(first, sur, customer['email'], mandate_status))
         
         self.set_status(f"Loaded {len(customers)} customer(s)")
     
@@ -267,15 +295,25 @@ class CRMApp:
     
     def load_customer_to_form(self, customer):
         """Load customer data into form"""
-        self.name_var.set(customer['name'])
+        self.first_name_var.set(customer.get('first_name', ''))
+        self.surname_var.set(customer.get('surname', ''))
         self.email_var.set(customer['email'])
         self.phone_var.set(customer['phone'] or "")
+        self.mandate_var.set(customer.get('mandate', 0))
         
         if customer['birthday']:
             try:
                 self.birthday_entry.set_date(datetime.strptime(customer['birthday'], "%Y-%m-%d"))
             except:
                 pass
+        
+        if customer.get('mandate_expiry'):
+            try:
+                self.mandate_expiry_entry.set_date(datetime.strptime(customer['mandate_expiry'], "%Y-%m-%d"))
+            except:
+                pass
+        else:
+            self.mandate_expiry_entry.set_date(datetime.now())
         
         self.notes_text.delete("1.0", tk.END)
         if customer['notes']:
@@ -284,10 +322,13 @@ class CRMApp:
     def clear_form(self):
         """Clear the customer form"""
         self.selected_customer_id = None
-        self.name_var.set("")
+        self.first_name_var.set("")
+        self.surname_var.set("")
         self.email_var.set("")
         self.phone_var.set("")
+        self.mandate_var.set(0)
         self.birthday_entry.set_date(datetime.now())
+        self.mandate_expiry_entry.set_date(datetime.now())
         self.notes_text.delete("1.0", tk.END)
         self.set_status("Form cleared")
     
@@ -299,11 +340,16 @@ class CRMApp:
     def save_customer(self):
         """Save customer (add or update)"""
         # Validate
-        name = self.name_var.get().strip()
+        first_name = self.first_name_var.get().strip()
+        surname = self.surname_var.get().strip()
         email = self.email_var.get().strip()
         
-        if not name:
-            messagebox.showerror("Error", "Name is required")
+        if not first_name:
+            messagebox.showerror("Error", "First Name is required")
+            return
+            
+        if not surname:
+            messagebox.showerror("Error", "Surname is required")
             return
         
         if not email:
@@ -318,19 +364,24 @@ class CRMApp:
         birthday = self.birthday_entry.get_date().strftime("%Y-%m-%d")
         phone = self.phone_var.get().strip()
         notes = self.notes_text.get("1.0", tk.END).strip()
+        mandate = self.mandate_var.get()
+        mandate_expiry = self.mandate_expiry_entry.get_date().strftime("%Y-%m-%d") if mandate else None
         
         try:
             if self.selected_customer_id:
                 # Update existing
-                self.db.update_customer(self.selected_customer_id, name, email, birthday, phone, notes)
+                self.db.update_customer(self.selected_customer_id, first_name=first_name, surname=surname, 
+                                      email=email, birthday=birthday, phone=phone, notes=notes,
+                                      mandate=mandate, mandate_expiry=mandate_expiry)
                 messagebox.showinfo("Success", "Customer updated successfully")
-                self.set_status(f"Updated: {name}")
+                self.set_status(f"Updated: {first_name} {surname}")
             else:
                 # Add new
-                customer_id = self.db.add_customer(name, email, birthday, phone, notes)
+                customer_id = self.db.add_customer(first_name, surname, email, birthday, phone, notes,
+                                                 mandate, mandate_expiry)
                 self.selected_customer_id = customer_id
                 messagebox.showinfo("Success", "Customer added successfully")
-                self.set_status(f"Added: {name}")
+                self.set_status(f"Added: {first_name} {surname}")
             
             self.refresh_customer_list()
             
@@ -348,11 +399,11 @@ class CRMApp:
             return
         
         if messagebox.askyesno("Confirm Delete", 
-                              f"Are you sure you want to delete {customer['name']}?"):
+                              f"Are you sure you want to delete {customer['first_name']} {customer['surname']}?"):
             self.db.delete_customer(self.selected_customer_id)
             self.clear_form()
             self.refresh_customer_list()
-            self.set_status(f"Deleted: {customer['name']}")
+            self.set_status(f"Deleted: {customer['first_name']} {customer['surname']}")
     
     def send_email_to_customer(self):
         """Send email to selected customer"""
@@ -377,14 +428,14 @@ class CRMApp:
         
         # Subject
         ttk.Label(dialog, text="Subject:").pack(pady=5, padx=10, anchor=tk.W)
-        subject_var = tk.StringVar(value=f"Hello {customer['name']}")
+        subject_var = tk.StringVar(value=f"Hello {customer['first_name']}")
         ttk.Entry(dialog, textvariable=subject_var, width=70).pack(pady=5, padx=10, fill=tk.X)
         
         # Body
         ttk.Label(dialog, text="Message:").pack(pady=5, padx=10, anchor=tk.W)
         body_text = tk.Text(dialog, width=70, height=15, wrap=tk.WORD)
         body_text.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
-        body_text.insert("1.0", f"Dear {customer['name']},\n\n")
+        body_text.insert("1.0", f"Dear {customer['first_name']},\n\n")
         
         # Buttons
         button_frame = ttk.Frame(dialog)
@@ -557,7 +608,7 @@ class CRMApp:
             return
             
         # Create confirmation list
-        names = [c['name'] for c in customers]
+        names = [f"{c['first_name']} {c['surname']}" for c in customers]
         confirm_msg = f"Found {len(customers)} birthday(s) today:\n\n"
         confirm_msg += "\n".join(f"• {name}" for name in names)
         confirm_msg += "\n\nDo you want to send birthday emails to these people?"

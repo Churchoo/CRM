@@ -25,32 +25,109 @@ class Database:
         self.cursor = self.conn.cursor()
     
     def create_tables(self):
-        """Create database tables if they don't exist"""
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS customers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                birthday TEXT,
-                phone TEXT,
-                notes TEXT,
-                created_date TEXT NOT NULL,
-                modified_date TEXT NOT NULL
-            )
-        ''')
-        self.conn.commit()
+        """Create database tables if they don't exist and perform migrations"""
+        # Check if table exists
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='customers'")
+        table_exists = self.cursor.fetchone()
+        
+        if not table_exists:
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS customers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    first_name TEXT NOT NULL,
+                    surname TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    birthday TEXT,
+                    phone TEXT,
+                    notes TEXT,
+                    mandate INTEGER DEFAULT 0,
+                    mandate_expiry TEXT,
+                    created_date TEXT NOT NULL,
+                    modified_date TEXT NOT NULL
+                )
+            ''')
+            self.conn.commit()
+        else:
+            self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Migrate schema if necessary"""
+        self.cursor.execute("PRAGMA table_info(customers)")
+        columns = [row[1] for row in self.cursor.fetchall()]
+        
+        # Check if we need to split 'name' into 'first_name' and 'surname'
+        if 'name' in columns and 'first_name' not in columns:
+            print("Migrating database: Splitting 'name' into 'first_name' and 'surname'...")
+            
+            # 1. Rename old table
+            self.cursor.execute("ALTER TABLE customers RENAME TO customers_old")
+            
+            # 2. Create new table with new schema
+            self.cursor.execute('''
+                CREATE TABLE customers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    first_name TEXT NOT NULL,
+                    surname TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    birthday TEXT,
+                    phone TEXT,
+                    notes TEXT,
+                    mandate INTEGER DEFAULT 0,
+                    mandate_expiry TEXT,
+                    created_date TEXT NOT NULL,
+                    modified_date TEXT NOT NULL
+                )
+            ''')
+            
+            # 3. Copy data and split names
+            self.cursor.execute("SELECT * FROM customers_old")
+            old_rows = self.cursor.fetchall()
+            
+            for row in old_rows:
+                old_data = dict(row)
+                full_name = old_data['name'].strip()
+                
+                # Split name: "John Doe" -> "John", "Doe" | "John" -> "John", ""
+                parts = full_name.split(' ', 1)
+                first_name = parts[0]
+                surname = parts[1] if len(parts) > 1 else ""
+                
+                self.cursor.execute('''
+                    INSERT INTO customers (id, first_name, surname, email, birthday, phone, notes, created_date, modified_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (old_data['id'], first_name, surname, old_data['email'], 
+                      old_data.get('birthday'), old_data.get('phone'), old_data.get('notes'), 
+                      old_data['created_date'], old_data['modified_date']))
+            
+            # 4. Drop old table
+            self.cursor.execute("DROP TABLE customers_old")
+            self.conn.commit()
+            print("Migration complete!")
+            
+        # Ensure mandate columns exist (for cases where first_name already existed but mandate didn't)
+        self.cursor.execute("PRAGMA table_info(customers)")
+        columns = [row[1] for row in self.cursor.fetchall()]
+        if 'mandate' not in columns:
+            print("Adding mandate columns...")
+            self.cursor.execute("ALTER TABLE customers ADD COLUMN mandate INTEGER DEFAULT 0")
+            self.cursor.execute("ALTER TABLE customers ADD COLUMN mandate_expiry TEXT")
+            self.conn.commit()
     
-    def add_customer(self, name: str, email: str, birthday: str = None, 
-                    phone: str = None, notes: str = None) -> int:
+    def add_customer(self, first_name: str, surname: str, email: str, birthday: str = None, 
+                    phone: str = None, notes: str = None, mandate: int = 0, 
+                    mandate_expiry: str = None) -> int:
         """
         Add a new customer to the database
         
         Args:
-            name: Customer name
+            first_name: Customer first name
+            surname: Customer surname
             email: Customer email (must be unique)
             birthday: Birthday in YYYY-MM-DD format
             phone: Phone number
             notes: Additional notes
+            mandate: 1 if active, 0 otherwise
+            mandate_expiry: Expiry date in YYYY-MM-DD format
             
         Returns:
             Customer ID of newly created customer
@@ -59,9 +136,9 @@ class Database:
         
         try:
             self.cursor.execute('''
-                INSERT INTO customers (name, email, birthday, phone, notes, created_date, modified_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (name, email, birthday, phone, notes, now, now))
+                INSERT INTO customers (first_name, surname, email, birthday, phone, notes, mandate, mandate_expiry, created_date, modified_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (first_name, surname, email, birthday, phone, notes, mandate, mandate_expiry, now, now))
             self.conn.commit()
             return self.cursor.lastrowid
         except sqlite3.IntegrityError:
@@ -74,18 +151,19 @@ class Database:
         return dict(row) if row else None
     
     def get_all_customers(self) -> List[Dict]:
-        """Get all customers"""
-        self.cursor.execute('SELECT * FROM customers ORDER BY name')
+        """Get all customers sorted by surname then first name"""
+        self.cursor.execute('SELECT * FROM customers ORDER BY surname, first_name')
         return [dict(row) for row in self.cursor.fetchall()]
     
-    def update_customer(self, customer_id: int, name: str = None, email: str = None,
-                       birthday: str = None, phone: str = None, notes: str = None) -> bool:
+    def update_customer(self, customer_id: int, first_name: str = None, surname: str = None, 
+                       email: str = None, birthday: str = None, phone: str = None, 
+                       notes: str = None, mandate: int = None, mandate_expiry: str = None) -> bool:
         """
         Update customer information
         
         Args:
             customer_id: ID of customer to update
-            name, email, birthday, phone, notes: Fields to update (None = no change)
+            first_name, surname, email, birthday, phone, notes, mandate, mandate_expiry: Fields to update (None = no change)
             
         Returns:
             True if customer was updated, False if not found
@@ -96,20 +174,25 @@ class Database:
             return False
         
         # Update only provided fields
-        updated_name = name if name is not None else customer['name']
+        updated_first_name = first_name if first_name is not None else customer['first_name']
+        updated_surname = surname if surname is not None else customer['surname']
         updated_email = email if email is not None else customer['email']
         updated_birthday = birthday if birthday is not None else customer['birthday']
         updated_phone = phone if phone is not None else customer['phone']
         updated_notes = notes if notes is not None else customer['notes']
+        updated_mandate = mandate if mandate is not None else customer['mandate']
+        updated_mandate_expiry = mandate_expiry if mandate_expiry is not None else customer['mandate_expiry']
         modified_date = datetime.now().isoformat()
         
         try:
             self.cursor.execute('''
                 UPDATE customers 
-                SET name = ?, email = ?, birthday = ?, phone = ?, notes = ?, modified_date = ?
+                SET first_name = ?, surname = ?, email = ?, birthday = ?, phone = ?, notes = ?, 
+                    mandate = ?, mandate_expiry = ?, modified_date = ?
                 WHERE id = ?
-            ''', (updated_name, updated_email, updated_birthday, updated_phone, 
-                  updated_notes, modified_date, customer_id))
+            ''', (updated_first_name, updated_surname, updated_email, updated_birthday, 
+                  updated_phone, updated_notes, updated_mandate, updated_mandate_expiry, 
+                  modified_date, customer_id))
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
@@ -122,13 +205,13 @@ class Database:
         return self.cursor.rowcount > 0
     
     def search_customers(self, query: str) -> List[Dict]:
-        """Search customers by name or email"""
+        """Search customers by name (first or surname) or email"""
         search_term = f"%{query}%"
         self.cursor.execute('''
             SELECT * FROM customers 
-            WHERE name LIKE ? OR email LIKE ?
-            ORDER BY name
-        ''', (search_term, search_term))
+            WHERE first_name LIKE ? OR surname LIKE ? OR email LIKE ?
+            ORDER BY surname, first_name
+        ''', (search_term, search_term, search_term))
         return [dict(row) for row in self.cursor.fetchall()]
     
     def get_birthdays_today(self) -> List[Dict]:
@@ -199,6 +282,11 @@ class Database:
     def __del__(self):
         """Ensure connection is closed on deletion"""
         self.close()
+    
+    @property
+    def name_field(self):
+        """Legacy property for backward compatibility if needed, returns full name"""
+        return "first_name || ' ' || surname"
 
 
 # Test function
@@ -207,38 +295,48 @@ def test_crud():
     print("Testing Database CRUD operations...")
     
     # Create test database
-    db = Database("test_customers.db")
+    db_path = "test_customers.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        
+    db = Database(db_path)
     
     # Add customers
-    id1 = db.add_customer("John Doe", "john@example.com", "1990-05-15", "555-1234", "VIP customer")
-    id2 = db.add_customer("Jane Smith", "jane@example.com", "1985-03-22", "555-5678")
-    print(f"✓ Added customers with IDs: {id1}, {id2}")
+    id1 = db.add_customer("John", "Doe", "john@example.com", "1990-05-15", "555-1234", "VIP customer", 1, "2025-01-01")
+    id2 = db.add_customer("Jane", "Smith", "jane@example.com", "1985-03-22", "555-5678")
+    print(f"[OK] Added customers with IDs: {id1}, {id2}")
     
     # Get customer
     customer = db.get_customer(id1)
-    print(f"✓ Retrieved customer: {customer['name']}")
+    print(f"[OK] Retrieved customer: {customer['first_name']} {customer['surname']}")
+    print(f"[OK] Mandate: {customer['mandate']}, Expiry: {customer['mandate_expiry']}")
     
     # Update customer
-    db.update_customer(id1, phone="555-9999")
+    db.update_customer(id1, phone="555-9999", mandate=0)
     updated = db.get_customer(id1)
-    print(f"✓ Updated phone: {updated['phone']}")
+    print(f"[OK] Updated phone: {updated['phone']}, Updated Mandate: {updated['mandate']}")
     
     # Search
-    results = db.search_customers("john")
-    print(f"✓ Search found {len(results)} customer(s)")
+    results = db.search_customers("John")
+    print(f"[OK] Search found {len(results)} customer(s)")
     
     # Get all
     all_customers = db.get_all_customers()
-    print(f"✓ Total customers: {len(all_customers)}")
+    print(f"[OK] Total customers: {len(all_customers)}")
     
     # Delete
     db.delete_customer(id2)
-    print(f"✓ Deleted customer {id2}")
+    print(f"[OK] Deleted customer {id2}")
     
     # Cleanup
     db.close()
-    os.remove("test_customers.db")
-    print("✓ All tests passed!")
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    print("[OK] All tests passed!")
+
+
+if __name__ == "__main__":
+    test_crud()
 
 
 if __name__ == "__main__":
