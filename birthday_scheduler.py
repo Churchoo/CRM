@@ -1,6 +1,7 @@
 """
 Birthday scheduler module for CRM Application
-Handles automated birthday email checking and sending
+Handles birthday detection and alerts - emails are NOT sent automatically.
+The user is notified of today's birthdays and manually composes/sends each email.
 """
 
 import schedule
@@ -12,108 +13,63 @@ import logging
 
 
 class BirthdayScheduler:
-    def __init__(self, database, email_handler, check_time: str = "09:00", config_manager = None):
+    def __init__(self, database, email_handler=None, check_time: str = "09:00", config_manager=None):
         """
         Initialize birthday scheduler
         
         Args:
             database: Database instance
-            email_handler: EmailHandler instance
+            email_handler: Kept for compatibility but no longer used for auto-sending
             check_time: Time to check for birthdays daily (HH:MM format)
-            config_manager: ConfigManager instance for accessing templates
+            config_manager: ConfigManager instance
         """
         self.database = database
-        self.email_handler = email_handler
+        self.email_handler = email_handler  # kept for compatibility
         self.check_time = check_time
         self.config_manager = config_manager
         self.is_running = False
         self.scheduler_thread = None
         self.enabled = True
         self.last_check_date = None
+        self.on_birthdays_found: Optional[Callable] = None  # GUI callback
         
         # Setup logging
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
     
-    def check_and_send_birthday_emails(self, customers_to_send: list = None) -> dict:
+    def check_birthdays_today(self) -> list:
         """
-        Check for today's birthdays and send emails
-        
-        Args:
-            customers_to_send: Optional list of specific customers to send to.
-                               If None, checks database for today's birthdays.
+        Check for today's birthdays and fire the alert callback if any are found.
+        Does NOT send any emails - that is left to the user.
         
         Returns:
-            Dictionary with results: {sent: int, failed: int, customers: list}
+            List of customers with birthdays today
         """
         today = datetime.now().date()
         
-        # Prevent duplicate checks on the same day if automated
-        if customers_to_send is None and self.last_check_date == today:
+        # Prevent duplicate alerts on the same day
+        if self.last_check_date == today:
             self.logger.info("Birthday check already performed today")
-            return {"sent": 0, "failed": 0, "customers": [], "skipped": True}
+            return []
         
-        if customers_to_send is None:
-            self.logger.info("Checking for birthdays today...")
-            customers = self.database.get_birthdays_today()
+        self.logger.info("Checking for birthdays today...")
+        customers = self.database.get_birthdays_today()
+        self.last_check_date = today
+        
+        if customers:
+            self.logger.info(f"Found {len(customers)} birthday(s) today - alerting user")
+            if self.on_birthdays_found:
+                self.on_birthdays_found(customers)
         else:
-            customers = customers_to_send
+            self.logger.info("No birthdays today")
         
-        results = {
-            "sent": 0,
-            "failed": 0,
-            "customers": [],
-            "skipped": False
-        }
-        
-        if not customers:
-            self.logger.info("No birthdays to process")
-            if customers_to_send is None:
-                self.last_check_date = today
-            return results
-        
-        self.logger.info(f"Processing {len(customers)} birthday(s)")
-        
-        # Get template from config if available
-        template = None
-        if self.config_manager:
-            template = self.config_manager.get("birthday_scheduler.template")
-        
-        for customer in customers:
-            if not self.enabled and customers_to_send is None:
-                self.logger.info("Birthday emails disabled, stopping")
-                break
-            
-            first_name = customer.get('first_name', 'Valued')
-            surname = customer.get('surname', 'Customer')
-            full_name = f"{first_name} {surname}".strip()
-            
-            success, message = self.email_handler.send_birthday_email(customer, template=template)
-            
-            if success:
-                results["sent"] += 1
-                self.logger.info(f"[OK] Sent birthday email to {full_name}")
-            else:
-                results["failed"] += 1
-                self.logger.error(f"[ERROR] Failed to send to {full_name}: {message}")
-            
-            results["customers"].append({
-                "name": full_name,
-                "email": customer["email"],
-                "success": success,
-                "message": message
-            })
-        
-        if customers_to_send is None:
-            self.last_check_date = today
-            
-        return results
+        return customers
     
     def schedule_daily_check(self):
         """Schedule the daily birthday check"""
         schedule.clear()
-        schedule.every().day.at(self.check_time).do(self.check_and_send_birthday_emails)
-        self.logger.info(f"Scheduled daily birthday check at {self.check_time}")
+        schedule.every().day.at(self.check_time).do(self.check_birthdays_today)
+        self.logger.info(f"Scheduled daily birthday alert check at {self.check_time}")
     
     def run_scheduler(self):
         """Run the scheduler loop (runs in background thread)"""
@@ -175,16 +131,17 @@ class BirthdayScheduler:
         """Get customers who have birthdays today"""
         return self.database.get_birthdays_today()
     
-    def manual_check(self) -> dict:
+    def manual_check(self) -> list:
         """
-        Manually trigger a birthday check (ignores last check date)
+        Manually trigger a birthday alert check (ignores last check date).
+        Does NOT send emails.
         
         Returns:
-            Results dictionary
+            List of customers with birthdays today
         """
         self.logger.info("Manual birthday check triggered")
-        self.last_check_date = None  # Reset to allow manual check
-        return self.check_and_send_birthday_emails()
+        self.last_check_date = None  # Reset to allow re-check
+        return self.check_birthdays_today()
     
     def get_upcoming_birthdays(self, days: int = 7) -> list:
         """Get customers with upcoming birthdays"""
@@ -196,29 +153,28 @@ def test_scheduler():
     """Test birthday scheduler functionality"""
     print("Birthday Scheduler Test")
     
-    # Mock database and email handler
     class MockDB:
         def get_birthdays_today(self):
             return [
-                {"name": "Test User", "email": "test@example.com", "birthday": "1990-01-27"}
+                {"first_name": "Test", "surname": "User", "email": "test@example.com", "birthday": "1990-01-27"}
             ]
         
         def get_upcoming_birthdays(self, days):
             return []
     
-    class MockEmailHandler:
-        def send_birthday_email(self, customer):
-            return True, f"Mock email sent to {customer['name']}"
-    
     db = MockDB()
-    email = MockEmailHandler()
-    scheduler = BirthdayScheduler(db, email, check_time="09:00")
+    scheduler = BirthdayScheduler(db, check_time="09:00")
+    
+    # Register a test callback
+    alerted = []
+    scheduler.on_birthdays_found = lambda customers: alerted.extend(customers)
     
     print(f"[OK] Scheduler created with check time: {scheduler.check_time}")
     
     # Test manual check
     results = scheduler.manual_check()
-    print(f"[OK] Manual check completed: {results['sent']} sent, {results['failed']} failed")
+    print(f"[OK] Manual check found {len(results)} birthday(s)")
+    print(f"[OK] Alert callback fired: {len(alerted)} customer(s) alerted")
     
     # Test enable/disable
     scheduler.disable()

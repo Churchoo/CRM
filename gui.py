@@ -39,8 +39,12 @@ class CRMApp:
         # Load initial data
         self.refresh_customer_list()
         
-        # Start birthday scheduler
+        # Start birthday scheduler and register alert callback
+        self.scheduler.on_birthdays_found = self._on_birthday_alert
         self.scheduler.start()
+        
+        # Check birthdays on startup (runs once per day)
+        self.root.after(1500, self._run_startup_birthday_check)
         
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -83,8 +87,7 @@ class CRMApp:
         tools_menu.add_command(label="Email Settings", command=self.show_email_settings)
         tools_menu.add_command(label="Send Test Email", command=self.send_test_email)
         tools_menu.add_separator()
-        tools_menu.add_command(label="Edit Birthday Template", command=self.show_birthday_template_editor)
-        tools_menu.add_command(label="Send Birthday Emails", command=self.manual_birthday_check)
+        tools_menu.add_command(label="🎂 Check Today's Birthdays", command=self.manual_birthday_check)
         tools_menu.add_separator()
         tools_menu.add_command(label="Check Mandates", command=self.manual_mandate_check)
         
@@ -637,40 +640,153 @@ class CRMApp:
         ttk.Button(button_frame, text="💾 Save Template", command=save).pack(side=tk.LEFT, padx=10)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=10)
 
+    def _run_startup_birthday_check(self):
+        """Run birthday check once on startup (non-blocking)"""
+        threading.Thread(
+            target=self.scheduler.check_birthdays_today,
+            daemon=True
+        ).start()
+
+    def _on_birthday_alert(self, customers: list):
+        """Called by scheduler (background thread) when birthdays are found today."""
+        # Marshal to main thread
+        self.root.after(0, lambda: self.show_birthday_alert_dialog(customers))
+
     def manual_birthday_check(self):
-        """Manually trigger birthday check with interactive confirmation"""
+        """Manually trigger today's birthday check and show the alert dialog"""
         customers = self.scheduler.get_todays_birthdays()
-        
         if not customers:
-            messagebox.showinfo("Birthday Check", "No birthdays found for today.")
+            messagebox.showinfo("Birthday Check", "No birthdays today. 🎂")
             return
-            
-        # Create confirmation list
-        names = [f"{c['first_name']} {c['surname']}" for c in customers]
-        confirm_msg = f"Found {len(customers)} birthday(s) today:\n\n"
-        confirm_msg += "\n".join(f"• {name}" for name in names)
-        confirm_msg += "\n\nDo you want to send birthday emails to these people?"
+        self.show_birthday_alert_dialog(customers)
+
+    def show_birthday_alert_dialog(self, customers: list):
+        """Show a birthday alert dialog listing each person, with a Compose Email button."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🎂 Birthday Alerts")
+        dialog.geometry("480x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(True, True)
         
-        if messagebox.askyesno("Confirm Birthday Emails", confirm_msg):
-            def send():
-                # Use the interactive check results
-                results = self.scheduler.check_and_send_birthday_emails(customers_to_send=customers)
-                
-                msg = f"Birthday Check Complete:\n\n"
-                msg += f"Emails sent: {results['sent']}\n"
-                msg += f"Failed: {results['failed']}\n\n"
-                
-                if results['customers']:
-                    msg += "Details:\n"
-                    for customer in results['customers']:
-                        status = "[OK]" if customer['success'] else "[X]"
-                        msg += f"{status} {customer['name']}: {customer['message']}\n"
-                
-                # Show results on main thread
-                self.root.after(0, lambda: messagebox.showinfo("Birthday Check Results", msg))
-            
-            # Run in thread to avoid blocking UI
-            threading.Thread(target=send, daemon=True).start()
+        # Centre on screen
+        dialog.geometry("+%d+%d" % (
+            self.root.winfo_rootx() + 150,
+            self.root.winfo_rooty() + 80
+        ))
+
+        # Header
+        header_frame = ttk.Frame(dialog, padding="10 10 10 0")
+        header_frame.pack(fill=tk.X)
+        ttk.Label(
+            header_frame,
+            text=f"🎂  {len(customers)} Birthday{'s' if len(customers) != 1 else ''} Today!",
+            style="Title.TLabel"
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            header_frame,
+            text="Choose who to email and personalise each message before sending.",
+            style="Subtitle.TLabel",
+            foreground="#555"
+        ).pack(anchor=tk.W, pady=(2, 8))
+        ttk.Separator(dialog, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10)
+
+        # Scrollable list of people
+        canvas_frame = ttk.Frame(dialog, padding="10 5")
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for customer in customers:
+            first = customer.get('first_name', '')
+            sur = customer.get('surname', '')
+            email_addr = customer.get('email', 'No email')
+            full_name = f"{first} {sur}".strip()
+
+            row = ttk.Frame(inner, padding="5 6")
+            row.pack(fill=tk.X, pady=2)
+
+            # Name + email info
+            info_frame = ttk.Frame(row)
+            info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Label(info_frame, text=f"🎂  {full_name}", font=("Arial", 10, "bold")).pack(anchor=tk.W)
+            ttk.Label(info_frame, text=email_addr, foreground="#555", font=("Arial", 9)).pack(anchor=tk.W)
+
+            # Compose button (capture customer in default arg)
+            ttk.Button(
+                row,
+                text="✉ Compose Email",
+                command=lambda c=customer: self._open_birthday_composer(c)
+            ).pack(side=tk.RIGHT, padx=5)
+
+            ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
+
+        # Footer
+        ttk.Separator(dialog, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10)
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+
+    def _open_birthday_composer(self, customer):
+        """Open the email composer pre-populated with a birthday greeting."""
+        first_name = customer.get('first_name', 'there')
+        surname = customer.get('surname', '')
+        full_name = f"{first_name} {surname}".strip()
+        email_addr = customer.get('email', '')
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"🎂 Birthday Email — {full_name}")
+        dialog.geometry("620x520")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=f"To: {full_name} <{email_addr}>",
+                  foreground="#444").pack(pady=(12, 2), padx=15, anchor=tk.W)
+
+        ttk.Label(dialog, text="Subject:").pack(pady=(8, 2), padx=15, anchor=tk.W)
+        subject_var = tk.StringVar(value=f"Happy Birthday, {first_name}! 🎂")
+        ttk.Entry(dialog, textvariable=subject_var, width=75).pack(pady=(0, 8), padx=15, fill=tk.X)
+
+        ttk.Label(dialog, text="Message:").pack(pady=(0, 2), padx=15, anchor=tk.W)
+        body_text = tk.Text(dialog, width=75, height=16, wrap=tk.WORD, font=("Arial", 10))
+        body_text.pack(pady=(0, 8), padx=15, fill=tk.BOTH, expand=True)
+
+        # Pre-populate with a simple, editable greeting
+        default_body = (
+            f"Dear {first_name},\n\n"
+            f"Wishing you a very happy birthday! 🎉\n\n"
+            f"Best regards,"
+        )
+        body_text.insert("1.0", default_body)
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=10)
+
+        def send():
+            subject = subject_var.get().strip()
+            body = body_text.get("1.0", tk.END).strip()
+            if not subject or not body:
+                messagebox.showerror("Error", "Subject and message are required")
+                return
+            success, message = self.email.send_email(email_addr, subject, body)
+            if success:
+                messagebox.showinfo("Sent", f"Birthday email sent to {full_name}!")
+                dialog.destroy()
+            else:
+                messagebox.showerror("Error", message)
+
+        ttk.Button(button_frame, text="📤 Send", command=send).pack(side=tk.LEFT, padx=8)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=8)
 
     def check_expiring_mandates_startup(self):
         """Check for expiring mandates on startup and notify if found"""
@@ -769,9 +885,9 @@ class CRMApp:
     def update_scheduler_status(self):
         """Update scheduler status in status bar"""
         if self.scheduler.enabled:
-            status = f"🎂 Birthday emails: ON (Check at {self.scheduler.check_time})"
+            status = f"🎂 Birthday alerts: ON (Check at {self.scheduler.check_time})"
         else:
-            status = "🎂 Birthday emails: OFF"
+            status = "🎂 Birthday alerts: OFF"
         
         self.scheduler_status_var.set(status)
         
