@@ -281,14 +281,30 @@ class Database:
         self.conn.commit()
         return self.cursor.rowcount > 0
     
-    def search_customers(self, query: str) -> List[Dict]:
-        """Search customers by name (first or surname) or email"""
+    def search_customers(self, query: str, mandate_status: str = "All", land_type: str = "All") -> List[Dict]:
+        """Search customers by name, email, or ERF and filter by mandate status and land type"""
         search_term = f"%{query}%"
-        self.cursor.execute('''
-            SELECT * FROM customers 
-            WHERE first_name LIKE ? OR surname LIKE ? OR email LIKE ?
-            ORDER BY surname, first_name
-        ''', (search_term, search_term, search_term))
+        
+        sql = '''
+            SELECT DISTINCT c.* 
+            FROM customers c
+            LEFT JOIN properties p ON c.id = p.customer_id
+            WHERE (c.first_name LIKE ? OR c.surname LIKE ? OR c.email LIKE ? OR p.erf_number LIKE ?)
+        '''
+        params = [search_term, search_term, search_term, search_term]
+        
+        if mandate_status == "Active":
+            sql += " AND p.mandate = 1"
+        elif mandate_status == "Inactive":
+            sql += " AND (p.mandate = 0 OR p.mandate IS NULL)"
+            
+        if land_type != "All":
+            sql += " AND p.land_type = ?"
+            params.append(land_type)
+            
+        sql += " ORDER BY c.surname, c.first_name"
+        
+        self.cursor.execute(sql, tuple(params))
         return [dict(row) for row in self.cursor.fetchall()]
     
     def get_valid_mandates(self) -> List[Dict]:

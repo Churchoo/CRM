@@ -126,6 +126,22 @@ class CRMApp:
         ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT, padx=5)
         ttk.Entry(search_frame, textvariable=self.search_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         
+        # Filters
+        filter_frame = ttk.Frame(list_frame)
+        filter_frame.pack(fill=tk.X, pady=0)
+        
+        ttk.Label(filter_frame, text="Mandate:").pack(side=tk.LEFT, padx=(5, 2))
+        self.mandate_filter_var = tk.StringVar(value="All")
+        mandate_combo = ttk.Combobox(filter_frame, textvariable=self.mandate_filter_var, values=["All", "Active", "Inactive"], state="readonly", width=8)
+        mandate_combo.pack(side=tk.LEFT, padx=(0, 10))
+        mandate_combo.bind("<<ComboboxSelected>>", lambda e: self.search_customers())
+        
+        ttk.Label(filter_frame, text="Type:").pack(side=tk.LEFT, padx=(5, 2))
+        self.type_filter_var = tk.StringVar(value="All")
+        type_combo = ttk.Combobox(filter_frame, textvariable=self.type_filter_var, values=["All", "Residential", "Commercial", "Agricultural", "Industrial", "Vacant", "Other"], state="readonly", width=11)
+        type_combo.pack(side=tk.LEFT, padx=0)
+        type_combo.bind("<<ComboboxSelected>>", lambda e: self.search_customers())
+        
         # Customer list
         list_container = ttk.Frame(list_frame)
         list_container.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -301,13 +317,12 @@ class CRMApp:
         self.set_status(f"Loaded {len(customers)} customer(s)")
     
     def search_customers(self):
-        """Search customers based on search term"""
+        """Search customers based on search term and filters"""
         query = self.search_var.get().strip()
+        mandate_status = getattr(self, 'mandate_filter_var', tk.StringVar(value="All")).get()
+        land_type = getattr(self, 'type_filter_var', tk.StringVar(value="All")).get()
         
-        if query:
-            customers = self.db.search_customers(query)
-        else:
-            customers = self.db.get_all_customers()
+        customers = self.db.search_customers(query, mandate_status, land_type)
         
         self.refresh_customer_list(customers)
     
@@ -370,9 +385,76 @@ class CRMApp:
         self.set_status("Form cleared")
     
     def add_customer(self):
-        """Prepare form for adding new customer"""
-        self.clear_form()
-        self.set_status("Enter new customer details")
+        """Show dialog to add a new customer"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add New Customer")
+        dialog.geometry("450x450")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Add New Customer", style="Title.TLabel").pack(pady=10)
+        
+        form_frame = ttk.Frame(dialog, padding="10")
+        form_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Form fields
+        ttk.Label(form_frame, text="First Name:*").grid(row=0, column=0, sticky=tk.W, pady=5)
+        first_name_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=first_name_var).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Label(form_frame, text="Surname:*").grid(row=1, column=0, sticky=tk.W, pady=5)
+        surname_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=surname_var).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Label(form_frame, text="Email:*").grid(row=2, column=0, sticky=tk.W, pady=5)
+        email_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=email_var).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Label(form_frame, text="Birthday:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        birthday_entry = DateEntry(form_frame, width=17, background='darkblue', foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+        birthday_entry.grid(row=3, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Label(form_frame, text="Phone:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        phone_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=phone_var).grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Label(form_frame, text="Notes:").grid(row=5, column=0, sticky=(tk.W, tk.N), pady=5)
+        notes_text = tk.Text(form_frame, width=30, height=5, wrap=tk.WORD)
+        notes_text.grid(row=5, column=1, sticky=(tk.W, tk.E), pady=5)
+        
+        form_frame.columnconfigure(1, weight=1)
+        
+        button_frame = ttk.Frame(dialog, padding="10")
+        button_frame.pack(fill=tk.X)
+        
+        def save():
+            first_name = first_name_var.get().strip()
+            surname = surname_var.get().strip()
+            email = email_var.get().strip()
+            
+            if not first_name or not surname or not email:
+                messagebox.showerror("Error", "First Name, Surname, and Email are required", parent=dialog)
+                return
+                
+            if not self.email.validate_email(email):
+                messagebox.showerror("Error", "Invalid email address", parent=dialog)
+                return
+                
+            birthday = birthday_entry.get_date().strftime("%Y-%m-%d")
+            phone = phone_var.get().strip()
+            notes = notes_text.get("1.0", tk.END).strip()
+            
+            try:
+                self.db.add_customer(first_name, surname, email, birthday, phone, notes)
+                messagebox.showinfo("Success", "Customer added successfully", parent=dialog)
+                self.set_status(f"Added: {first_name} {surname}")
+                self.refresh_customer_list()
+                dialog.destroy()
+            except ValueError as e:
+                messagebox.showerror("Error", str(e), parent=dialog)
+                
+        ttk.Button(button_frame, text="Save", command=save).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
     
     def save_customer(self):
         """Save customer (add or update)"""
