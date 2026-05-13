@@ -29,9 +29,10 @@ class CRMApp:
         # Configure style
         self.setup_styles()
         
-        # Current customer selection
+        # Current customer selection state
         self.selected_customer_id = None
-        self.current_customer_id = None
+        self._expanded_customer_id = None
+        self.current_customer_id = None  # used by manual_add_property
         
         # Create UI
         self.create_menu()
@@ -90,199 +91,126 @@ class CRMApp:
     
     def create_main_layout(self):
         """Create main application layout"""
-        # Main container
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
+        main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(1, weight=1)
         
-        # Left panel - Customer list
-        self.create_customer_list_panel(main_frame)
+        # Top - Search & Filters
+        self.create_search_bar(main_frame)
         
-        # Right panel - Customer details
-        self.create_customer_details_panel(main_frame)
+        # Middle - Full-width customer tree
+        self.create_customer_tree(main_frame)
         
-        # Bottom panel - Status bar
+        # Bottom - Action buttons
+        self.create_action_bar(main_frame)
+        
+        # Status bar
         self.create_status_bar(main_frame)
     
-    def create_customer_list_panel(self, parent):
-        """Create customer list panel"""
-        list_frame = ttk.Frame(parent, padding="5")
-        list_frame.grid(row=0, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+    def create_search_bar(self, parent):
+        """Create top search and filter bar"""
+        top_frame = ttk.Frame(parent, padding="5")
+        top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        top_frame.columnconfigure(1, weight=1)
         
-        # Title
-        ttk.Label(list_frame, text="Customers", style="Title.TLabel").pack(pady=5)
+        ttk.Label(top_frame, text="Customers", style="Title.TLabel").grid(row=0, column=0, columnspan=6, sticky=tk.W, pady=(0, 6))
         
-        # Search bar
-        search_frame = ttk.Frame(list_frame)
-        search_frame.pack(fill=tk.X, pady=5)
-        
+        ttk.Label(top_frame, text="Search:").grid(row=1, column=0, sticky=tk.W, padx=(0, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace('w', lambda *args: self.search_customers())
+        ttk.Entry(top_frame, textvariable=self.search_var).grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(0, 15))
         
-        ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(search_frame, textvariable=self.search_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        
-        # Filters
-        filter_frame = ttk.Frame(list_frame)
-        filter_frame.pack(fill=tk.X, pady=0)
-        
-        ttk.Label(filter_frame, text="Mandate:").pack(side=tk.LEFT, padx=(5, 2))
+        ttk.Label(top_frame, text="Mandate:").grid(row=1, column=2, sticky=tk.W, padx=(0, 4))
         self.mandate_filter_var = tk.StringVar(value="All")
-        mandate_combo = ttk.Combobox(filter_frame, textvariable=self.mandate_filter_var, values=["All", "Active", "Inactive"], state="readonly", width=8)
-        mandate_combo.pack(side=tk.LEFT, padx=(0, 10))
+        mandate_combo = ttk.Combobox(top_frame, textvariable=self.mandate_filter_var,
+                                     values=["All", "Active", "Inactive"], state="readonly", width=9)
+        mandate_combo.grid(row=1, column=3, sticky=tk.W, padx=(0, 15))
         mandate_combo.bind("<<ComboboxSelected>>", lambda e: self.search_customers())
         
-        ttk.Label(filter_frame, text="Type:").pack(side=tk.LEFT, padx=(5, 2))
+        ttk.Label(top_frame, text="Land Type:").grid(row=1, column=4, sticky=tk.W, padx=(0, 4))
         self.type_filter_var = tk.StringVar(value="All")
-        type_combo = ttk.Combobox(filter_frame, textvariable=self.type_filter_var, values=["All", "Residential", "Commercial", "Agricultural", "Industrial", "Vacant", "Other"], state="readonly", width=11)
-        type_combo.pack(side=tk.LEFT, padx=0)
+        type_combo = ttk.Combobox(top_frame, textvariable=self.type_filter_var,
+                                   values=["All", "Residential", "Commercial", "Agricultural", "Industrial", "Vacant", "Other"],
+                                   state="readonly", width=12)
+        type_combo.grid(row=1, column=5, sticky=tk.W)
         type_combo.bind("<<ComboboxSelected>>", lambda e: self.search_customers())
+
+    def create_customer_tree(self, parent):
+        """Create the full-width expandable customer/property tree"""
+        tree_frame = ttk.Frame(parent)
+        tree_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(6, 0))
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
         
-        # Customer list
-        list_container = ttk.Frame(list_frame)
-        list_container.pack(fill=tk.BOTH, expand=True, pady=5)
+        columns = ("Surname", "FirstName", "Email", "Phone", "ERF", "LandType", "Mandate", "Expiry")
+        self.customer_tree = ttk.Treeview(tree_frame, columns=columns,
+                                          show="tree headings", selectmode="browse")
         
-        # Scrollbar
-        scrollbar = ttk.Scrollbar(list_container)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Treeview
-        self.customer_tree = ttk.Treeview(list_container, columns=("FirstName", "Surname", "Email", "Mandate", "Expiry"), 
-                                         show="tree headings", yscrollcommand=scrollbar.set)
+        self.customer_tree.heading("#0",       text="")
+        self.customer_tree.heading("Surname",   text="Surname")
         self.customer_tree.heading("FirstName", text="First Name")
-        self.customer_tree.heading("Surname", text="Surname")
-        self.customer_tree.heading("Email", text="Email")
-        self.customer_tree.heading("Mandate", text="Mandate")
-        self.customer_tree.heading("Expiry", text="Expiry")
-        self.customer_tree.column("#0", width=0, stretch=False)
-        self.customer_tree.column("FirstName", width=100)
-        self.customer_tree.column("Surname", width=100)
-        self.customer_tree.column("Email", width=200)
-        self.customer_tree.column("Mandate", width=60)
-        self.customer_tree.column("Expiry", width=80)
+        self.customer_tree.heading("Email",     text="Email")
+        self.customer_tree.heading("Phone",     text="Phone")
+        self.customer_tree.heading("ERF",       text="ERF Number")
+        self.customer_tree.heading("LandType",  text="Land Type")
+        self.customer_tree.heading("Mandate",   text="Mandate")
+        self.customer_tree.heading("Expiry",    text="Expiry")
         
-        self.customer_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.customer_tree.yview)
+        self.customer_tree.column("#0",       width=24, stretch=False)
+        self.customer_tree.column("Surname",   width=130)
+        self.customer_tree.column("FirstName", width=120)
+        self.customer_tree.column("Email",     width=200)
+        self.customer_tree.column("Phone",     width=120)
+        self.customer_tree.column("ERF",       width=110)
+        self.customer_tree.column("LandType",  width=110)
+        self.customer_tree.column("Mandate",   width=80)
+        self.customer_tree.column("Expiry",    width=90)
         
-        # Bind selection
-        self.customer_tree.bind("<<TreeviewSelect>>", self.on_customer_select)
+        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL,   command=self.customer_tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.customer_tree.xview)
+        self.customer_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         
-        # Buttons
-        button_frame = ttk.Frame(list_frame)
-        button_frame.pack(fill=tk.X, pady=5)
+        self.customer_tree.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        hsb.grid(row=1, column=0, sticky=(tk.E, tk.W))
         
-        ttk.Button(button_frame, text="➕ Add Customer", command=self.add_customer).pack(side=tk.LEFT, padx=2)
-        ttk.Button(button_frame, text="🗑️ Delete", command=self.delete_customer).pack(side=tk.LEFT, padx=2)
+        # Tags for child rows (slightly muted)
+        self.customer_tree.tag_configure("property", foreground="#aaaaaa")
+        
+        # Bind double-click to toggle expand/collapse
+        self.customer_tree.bind("<Double-1>", self._on_tree_double_click)
+        # Track expanded state
+        self._expanded_customer_id = None
+
+    def create_action_bar(self, parent):
+        """Create the bottom action button bar"""
+        action_frame = ttk.Frame(parent, padding="5")
+        action_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(6, 0))
+        
+        ttk.Button(action_frame, text="➕ Add Customer",  command=self.add_customer).pack(side=tk.LEFT, padx=4)
+        
+        self.edit_btn = ttk.Button(action_frame, text="✏️ Edit Customer",
+                                   command=self.edit_selected_customer, state=tk.DISABLED)
+        self.edit_btn.pack(side=tk.LEFT, padx=4)
+        
+        self.email_btn = ttk.Button(action_frame, text="📧 Send Email",
+                                    command=self.send_email_to_customer, state=tk.DISABLED)
+        self.email_btn.pack(side=tk.LEFT, padx=4)
+        
+        self.delete_btn = ttk.Button(action_frame, text="🗑️ Delete",
+                                     command=self.delete_customer, state=tk.DISABLED)
+        self.delete_btn.pack(side=tk.LEFT, padx=4)
     
-    def create_customer_details_panel(self, parent):
-        """Create customer details panel"""
-        details_frame = ttk.Frame(parent, padding="5")
-        details_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
-        details_frame.columnconfigure(1, weight=1)
-        
-        # Title
-        ttk.Label(details_frame, text="Customer Details", style="Title.TLabel").grid(row=0, column=0, columnspan=2, pady=5)
-        
-        # Form fields
-        row = 1
-        
-        # First Name
-        ttk.Label(details_frame, text="First Name:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.first_name_var = tk.StringVar()
-        ttk.Entry(details_frame, textvariable=self.first_name_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
-        # Surname
-        ttk.Label(details_frame, text="Surname:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.surname_var = tk.StringVar()
-        ttk.Entry(details_frame, textvariable=self.surname_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
-        # Email
-        ttk.Label(details_frame, text="Email:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.email_var = tk.StringVar()
-        ttk.Entry(details_frame, textvariable=self.email_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
-        # Birthday
-        ttk.Label(details_frame, text="Birthday:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.birthday_entry = DateEntry(details_frame, width=37, background='darkblue',
-                                       foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
-        self.birthday_entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
-        # Phone
-        ttk.Label(details_frame, text="Phone:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.phone_var = tk.StringVar()
-        ttk.Entry(details_frame, textvariable=self.phone_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
-        # Notes
-        ttk.Label(details_frame, text="Notes:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5, padx=5)
-        self.notes_text = tk.Text(details_frame, width=40, height=8, wrap=tk.WORD)
-        self.notes_text.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=5)
-        details_frame.rowconfigure(row, weight=1)
-        row += 1
-        ttk.Label(details_frame, text="Notes:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5, padx=5)
-        self.notes_text = tk.Text(details_frame, width=40, height=8, wrap=tk.WORD)
-        self.notes_text.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=5)
-        details_frame.rowconfigure(row, weight=1)
-        row += 1
-        
-        # Properties Section
-        ttk.Label(details_frame, text="Properties:", font=("Arial", 10, "bold")).grid(row=row, column=0, sticky=tk.W, pady=(10, 5), padx=5)
-        row += 1
-        
-        prop_container = ttk.Frame(details_frame)
-        prop_container.grid(row=row, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
-        
-        prop_columns = ("ERF", "Type", "Mandate", "Expiry")
-        self.property_tree = ttk.Treeview(prop_container, columns=prop_columns, show="headings", height=4)
-        self.property_tree.heading("ERF", text="ERF Number")
-        self.property_tree.heading("Type", text="Land Type")
-        self.property_tree.heading("Mandate", text="Mandate")
-        self.property_tree.heading("Expiry", text="Expiry")
-        self.property_tree.column("ERF", width=100)
-        self.property_tree.column("Type", width=100)
-        self.property_tree.column("Mandate", width=80)
-        self.property_tree.column("Expiry", width=100)
-        
-        prop_scroll = ttk.Scrollbar(prop_container, orient=tk.VERTICAL, command=self.property_tree.yview)
-        self.property_tree.configure(yscrollcommand=prop_scroll.set)
-        
-        self.property_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        prop_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        row += 1
-        
-        prop_btn_frame = ttk.Frame(details_frame)
-        prop_btn_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5, padx=5)
-        
-        self.add_prop_btn = ttk.Button(prop_btn_frame, text="➕ Add Property", command=self.manual_add_property)
-        self.add_prop_btn.pack(side=tk.LEFT, padx=2)
-        self.remove_prop_btn = ttk.Button(prop_btn_frame, text="🗑️ Remove Property", command=self.manual_remove_property)
-        self.remove_prop_btn.pack(side=tk.LEFT, padx=2)
-        
-        # Set buttons state initially (disabled until a customer is selected)
-        self.add_prop_btn.config(state=tk.DISABLED)
-        self.remove_prop_btn.config(state=tk.DISABLED)
-        row += 1
-        
-        # Buttons
-        button_frame = ttk.Frame(details_frame)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=10)
-        
-        ttk.Button(button_frame, text="💾 Save", command=self.save_customer).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="🔄 Clear", command=self.clear_form).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="📧 Send Email", command=self.send_email_to_customer).pack(side=tk.LEFT, padx=5)
+    # --- status bar (row 3) ---
     
     def create_status_bar(self, parent):
         """Create status bar"""
         status_frame = ttk.Frame(parent, relief=tk.SUNKEN, padding="2")
-        status_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        status_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(4, 0))
         
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
@@ -294,25 +222,40 @@ class CRMApp:
         ttk.Label(status_frame, textvariable=self.scheduler_status_var).pack(side=tk.RIGHT)
     
     def refresh_customer_list(self, customers=None):
-        """Refresh the customer list"""
-        # Clear existing items
+        """Refresh the full-width customer/property tree"""
+        # Remember which customer is expanded
+        expanded_id = self._expanded_customer_id
+        
         for item in self.customer_tree.get_children():
             self.customer_tree.delete(item)
         
-        # Get customers
         if customers is None:
             customers = self.db.get_all_customers()
         
-        # Add to tree
         for customer in customers:
-             # Use proper fields with fallback for backward compatibility if needed (schema migration handles it though)
+            cid = customer['id']
+            sur  = customer.get('surname', '')
             first = customer.get('first_name', '')
-            sur = customer.get('surname', '')
-            mandate_status = "Active" if customer.get('mandate') else "Inactive"
-            expiry = customer.get('mandate_expiry', '') if customer.get('mandate') else ""
+            # Insert customer as parent row (property columns blank)
+            self.customer_tree.insert("", tk.END, iid=str(cid),
+                                      values=(sur, first, customer['email'],
+                                              customer.get('phone', '') or '',
+                                              '', '', '', ''),
+                                      open=False)
+            # Insert property child rows
+            properties = self.db.get_properties(cid)
+            for prop in properties:
+                mandate_str = "Yes" if prop['mandate'] else "No"
+                expiry_str  = prop['mandate_expiry'] if prop['mandate'] and prop['mandate_expiry'] else "-"
+                self.customer_tree.insert(str(cid), tk.END,
+                                          values=('', '', '', '',
+                                                  prop['erf_number'], prop['land_type'],
+                                                  mandate_str, expiry_str),
+                                          tags=("property",))
             
-            self.customer_tree.insert("", tk.END, iid=customer['id'],
-                                     values=(first, sur, customer['email'], mandate_status, expiry))
+            # Re-expand if it was open before refresh
+            if expanded_id is not None and str(cid) == str(expanded_id):
+                self.customer_tree.item(str(cid), open=True)
         
         self.set_status(f"Loaded {len(customers)} customer(s)")
     
@@ -326,18 +269,42 @@ class CRMApp:
         
         self.refresh_customer_list(customers)
     
+    def _on_tree_double_click(self, event):
+        """Toggle expand/collapse on double-clicking a customer row; enable Edit button when expanded."""
+        item = self.customer_tree.identify_row(event.y)
+        if not item:
+            return
+        # Only act on top-level (customer) rows
+        if self.customer_tree.parent(item) != '':
+            return
+        currently_open = self.customer_tree.item(item, 'open')
+        new_state = not currently_open
+        self.customer_tree.item(item, open=new_state)
+        if new_state:
+            self._expanded_customer_id = int(item)
+            self.selected_customer_id  = int(item)
+            self.edit_btn.config(state=tk.NORMAL)
+            self.email_btn.config(state=tk.NORMAL)
+            self.delete_btn.config(state=tk.NORMAL)
+        else:
+            self._expanded_customer_id = None
+            self.edit_btn.config(state=tk.DISABLED)
+
     def on_customer_select(self, event):
-        """Handle customer selection"""
+        """Track which top-level customer row is selected for email/delete."""
         selection = self.customer_tree.selection()
         if not selection:
             return
-        
-        customer_id = int(selection[0])
-        customer = self.db.get_customer(customer_id)
-        
-        if customer:
-            self.selected_customer_id = customer_id
-            self.load_customer_to_form(customer)
+        item = selection[0]
+        # Walk up to the top-level parent if a property row is selected
+        while self.customer_tree.parent(item):
+            item = self.customer_tree.parent(item)
+        try:
+            self.selected_customer_id = int(item)
+            self.email_btn.config(state=tk.NORMAL)
+            self.delete_btn.config(state=tk.NORMAL)
+        except ValueError:
+            pass
     
     def load_customer_to_form(self, customer):
         """Load customer data into form"""
@@ -365,25 +332,152 @@ class CRMApp:
         self.remove_prop_btn.config(state=tk.NORMAL)
     
     def clear_form(self):
-        """Clear the customer form"""
+        """Reset selection state"""
         self.selected_customer_id = None
-        self.first_name_var.set("")
-        self.surname_var.set("")
-        self.email_var.set("")
-        self.phone_var.set("")
-        self.birthday_entry.set_date(datetime.now())
-        self.notes_text.delete("1.0", tk.END)
-        
-        # Properties
-        for item in self.property_tree.get_children():
-            self.property_tree.delete(item)
-        
-        self.current_customer_id = None
-        self.add_prop_btn.config(state=tk.DISABLED)
-        self.remove_prop_btn.config(state=tk.DISABLED)
-        
-        self.set_status("Form cleared")
+        self._expanded_customer_id = None
+        self.edit_btn.config(state=tk.DISABLED)
+        self.email_btn.config(state=tk.DISABLED)
+        self.delete_btn.config(state=tk.DISABLED)
+        self.set_status("Ready")
     
+    def edit_selected_customer(self):
+        """Open the edit dialog for the currently expanded customer."""
+        if not self._expanded_customer_id:
+            messagebox.showwarning("Warning", "Please expand a customer row first.")
+            return
+        customer = self.db.get_customer(self._expanded_customer_id)
+        if customer:
+            self.show_edit_customer_dialog(customer)
+
+    def show_edit_customer_dialog(self, customer):
+        """Open a pre-filled dialog to edit a customer and their properties."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Edit — {customer.get('first_name','')} {customer.get('surname','')}")
+        dialog.geometry("560x620")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(True, True)
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(1, weight=1)
+
+        ttk.Label(dialog, text="Edit Customer", style="Title.TLabel").pack(pady=(12, 4), padx=15, anchor=tk.W)
+        ttk.Separator(dialog).pack(fill=tk.X, padx=15, pady=(0, 8))
+
+        # ── Basic info form ──
+        form = ttk.Frame(dialog, padding="15 0 15 0")
+        form.pack(fill=tk.X)
+        form.columnconfigure(1, weight=1)
+
+        fields = [
+            ("First Name:*", "first_name"),
+            ("Surname:*",    "surname"),
+            ("Email:*",      "email"),
+            ("Phone:",       "phone"),
+        ]
+        vars_ = {}
+        for r, (label, key) in enumerate(fields):
+            ttk.Label(form, text=label).grid(row=r, column=0, sticky=tk.W, pady=4, padx=(0,10))
+            v = tk.StringVar(value=customer.get(key, '') or '')
+            vars_[key] = v
+            ttk.Entry(form, textvariable=v).grid(row=r, column=1, sticky=(tk.W, tk.E), pady=4)
+
+        ttk.Label(form, text="Birthday:").grid(row=len(fields), column=0, sticky=tk.W, pady=4, padx=(0,10))
+        bday_entry = DateEntry(form, width=17, background='darkblue', foreground='white',
+                               borderwidth=2, date_pattern='yyyy-mm-dd')
+        if customer.get('birthday'):
+            try:
+                bday_entry.set_date(datetime.strptime(customer['birthday'], "%Y-%m-%d"))
+            except Exception:
+                pass
+        bday_entry.grid(row=len(fields), column=1, sticky=tk.W, pady=4)
+
+        ttk.Label(form, text="Notes:").grid(row=len(fields)+1, column=0, sticky=(tk.W, tk.N), pady=4, padx=(0,10))
+        notes_box = tk.Text(form, height=4, wrap=tk.WORD)
+        notes_box.insert("1.0", customer.get('notes', '') or '')
+        notes_box.grid(row=len(fields)+1, column=1, sticky=(tk.W, tk.E), pady=4)
+
+        ttk.Separator(dialog).pack(fill=tk.X, padx=15, pady=8)
+
+        # ── Properties sub-section ──
+        prop_frame = ttk.Frame(dialog, padding="15 0 15 0")
+        prop_frame.pack(fill=tk.BOTH, expand=True)
+        prop_frame.columnconfigure(0, weight=1)
+        prop_frame.rowconfigure(0, weight=1)
+
+        ttk.Label(prop_frame, text="Properties", font=("Segoe UI", 11, "bold")).grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 4))
+
+        prop_cols = ("ERF", "Type", "Mandate", "Expiry")
+        prop_tree = ttk.Treeview(prop_frame, columns=prop_cols, show="headings", height=5)
+        for col, heading in zip(prop_cols, ("ERF Number", "Land Type", "Mandate", "Expiry")):
+            prop_tree.heading(col, text=heading)
+            prop_tree.column(col, width=120)
+
+        prop_vsb = ttk.Scrollbar(prop_frame, orient=tk.VERTICAL, command=prop_tree.yview)
+        prop_tree.configure(yscrollcommand=prop_vsb.set)
+        prop_tree.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        prop_vsb.grid(row=1, column=1, sticky=(tk.N, tk.S))
+
+        def _reload_props():
+            for i in prop_tree.get_children():
+                prop_tree.delete(i)
+            for p in self.db.get_properties(customer['id']):
+                ms = "Yes" if p['mandate'] else "No"
+                ex = p['mandate_expiry'] if p['mandate'] and p['mandate_expiry'] else "-"
+                prop_tree.insert("", tk.END, iid=str(p['id']), values=(p['erf_number'], p['land_type'], ms, ex))
+        _reload_props()
+
+        prop_btn_row = ttk.Frame(prop_frame)
+        prop_btn_row.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
+
+        def _add_prop():
+            self.current_customer_id = customer['id']
+            self.manual_add_property(callback=_reload_props)
+
+        def _remove_prop():
+            sel = prop_tree.selection()
+            if not sel:
+                messagebox.showwarning("Warning", "Select a property to remove.", parent=dialog)
+                return
+            if messagebox.askyesno("Confirm", "Remove selected property?", parent=dialog):
+                self.db.delete_property(int(sel[0]))
+                _reload_props()
+
+        ttk.Button(prop_btn_row, text="➕ Add Property",    command=_add_prop).pack(side=tk.LEFT, padx=(0,4))
+        ttk.Button(prop_btn_row, text="🗑️ Remove Property", command=_remove_prop).pack(side=tk.LEFT)
+
+        # ── Footer buttons ──
+        ttk.Separator(dialog).pack(fill=tk.X, padx=15, pady=8)
+        footer = ttk.Frame(dialog, padding="15 0 15 12")
+        footer.pack(fill=tk.X)
+
+        def _save():
+            fn    = vars_['first_name'].get().strip()
+            sn    = vars_['surname'].get().strip()
+            email = vars_['email'].get().strip()
+            if not fn or not sn or not email:
+                messagebox.showerror("Error", "First Name, Surname, and Email are required.", parent=dialog)
+                return
+            if not self.email.validate_email(email):
+                messagebox.showerror("Error", "Invalid email address.", parent=dialog)
+                return
+            try:
+                self.db.update_customer(
+                    customer['id'],
+                    first_name=fn, surname=sn, email=email,
+                    birthday=bday_entry.get_date().strftime("%Y-%m-%d"),
+                    phone=vars_['phone'].get().strip(),
+                    notes=notes_box.get("1.0", tk.END).strip()
+                )
+                self.set_status(f"Updated: {fn} {sn}")
+                self.refresh_customer_list()
+                dialog.destroy()
+            except ValueError as exc:
+                messagebox.showerror("Error", str(exc), parent=dialog)
+
+        ttk.Button(footer, text="💾 Save",   command=_save).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(footer, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+
     def add_customer(self):
         """Show dialog to add a new customer"""
         dialog = tk.Toplevel(self.root)
@@ -456,87 +550,39 @@ class CRMApp:
         ttk.Button(button_frame, text="Save", command=save).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
     
-    def save_customer(self):
-        """Save customer (add or update)"""
-        # Validate
-        first_name = self.first_name_var.get().strip()
-        surname = self.surname_var.get().strip()
-        email = self.email_var.get().strip()
-        
-        if not first_name:
-            messagebox.showerror("Error", "First Name is required")
-            return
-            
-        if not surname:
-            messagebox.showerror("Error", "Surname is required")
-            return
-        
-        if not email:
-            messagebox.showerror("Error", "Email is required")
-            return
-        
-        if not self.email.validate_email(email):
-            messagebox.showerror("Error", "Invalid email address")
-            return
-        
-        # Get form data
-        birthday = self.birthday_entry.get_date().strftime("%Y-%m-%d")
-        phone = self.phone_var.get().strip()
-        notes = self.notes_text.get("1.0", tk.END).strip()
-        
-        try:
-            if self.selected_customer_id:
-                # Update existing
-                self.db.update_customer(self.selected_customer_id, first_name=first_name, surname=surname, 
-                                      email=email, birthday=birthday, phone=phone, notes=notes)
-                messagebox.showinfo("Success", "Customer updated successfully")
-                self.set_status(f"Updated: {first_name} {surname}")
-            else:
-                # Add new
-                customer_id = self.db.add_customer(first_name, surname, email, birthday, phone, notes)
-                self.selected_customer_id = customer_id
-                messagebox.showinfo("Success", "Customer added successfully")
-                self.set_status(f"Added: {first_name} {surname}")
-            
-            self.refresh_customer_list()
-            
-        except ValueError as e:
-            messagebox.showerror("Error", str(e))
-    
+
     def delete_customer(self):
-        """Delete selected customer"""
+        """Delete the currently selected customer"""
         if not self.selected_customer_id:
-            messagebox.showwarning("Warning", "Please select a customer to delete")
+            messagebox.showwarning("Warning", "Please select a customer first.")
             return
-        
         customer = self.db.get_customer(self.selected_customer_id)
         if not customer:
             return
-        
-        if messagebox.askyesno("Confirm Delete", 
-                              f"Are you sure you want to delete {customer['first_name']} {customer['surname']}?"):
+        if messagebox.askyesno("Confirm Delete",
+                               f"Delete {customer['first_name']} {customer['surname']} and all their properties?"):
             self.db.delete_customer(self.selected_customer_id)
-            self.clear_form()
+            self._expanded_customer_id = None
+            self.selected_customer_id = None
+            self.edit_btn.config(state=tk.DISABLED)
+            self.email_btn.config(state=tk.DISABLED)
+            self.delete_btn.config(state=tk.DISABLED)
             self.refresh_customer_list()
             self.set_status(f"Deleted: {customer['first_name']} {customer['surname']}")
     
     def send_email_to_customer(self):
-        """Send email to selected customer"""
+        """Send email to the selected customer"""
         if not self.selected_customer_id:
-            messagebox.showwarning("Warning", "Please select a customer")
+            messagebox.showwarning("Warning", "Please select a customer first.")
             return
-        
         customer = self.db.get_customer(self.selected_customer_id)
-        if not customer:
-            return
-        
-        # Show email composer dialog
-        self.show_email_composer(customer)
+        if customer:
+            self.show_email_composer(customer)
     
     def show_email_composer(self, customer):
         """Show email composer window"""
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"Send Email to {customer['name']}")
+        dialog.title(f"Send Email to {customer.get('first_name','')} {customer.get('surname','')}")
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
@@ -991,31 +1037,19 @@ class CRMApp:
             self.db.close()
             self.root.destroy()
     
-    def refresh_property_list(self):
-        """Refresh the property tree for the current customer"""
-        for item in self.property_tree.get_children():
-            self.property_tree.delete(item)
-            
-        if self.current_customer_id:
-            properties = self.db.get_properties(self.current_customer_id)
-            for prop in properties:
-                mandate_str = "Yes" if prop['mandate'] else "No"
-                expiry_str = prop['mandate_expiry'] if prop['mandate'] and prop['mandate_expiry'] else "-"
-                self.property_tree.insert("", tk.END, iid=prop['id'], values=(prop['erf_number'], prop['land_type'], mandate_str, expiry_str))
 
-    def manual_add_property(self):
-        """Show dialog to add a property"""
+    def manual_add_property(self, callback=None):
+        """Show dialog to add a property. Optional callback is called after saving."""
         if not self.current_customer_id:
             messagebox.showwarning("Warning", "Please select a customer first.")
             return
             
         dialog = tk.Toplevel(self.root)
         dialog.title("Add Property")
-        dialog.geometry("350x250")
+        dialog.geometry("350x280")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # Form
         main_frame = ttk.Frame(dialog, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -1027,17 +1061,17 @@ class CRMApp:
         
         ttk.Label(main_frame, text="Land Type:").pack(anchor=tk.W, pady=(0, 5))
         type_var = tk.StringVar(value="Residential")
-        type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=["Vacant", "Residential", "Agricultural", "Industrial"], state="readonly")
+        type_combo = ttk.Combobox(main_frame, textvariable=type_var,
+                                  values=["Vacant", "Residential", "Agricultural", "Industrial", "Commercial", "Other"],
+                                  state="readonly")
         type_combo.pack(fill=tk.X, pady=(0, 15))
         
-        # Mandate fields
         mandate_var = tk.IntVar(value=0)
-        mandate_cb = ttk.Checkbutton(main_frame, text="Active Mandate", variable=mandate_var)
-        mandate_cb.pack(anchor=tk.W, pady=(0, 5))
+        ttk.Checkbutton(main_frame, text="Active Mandate", variable=mandate_var).pack(anchor=tk.W, pady=(0, 5))
         
         ttk.Label(main_frame, text="Mandate Expiry:").pack(anchor=tk.W, pady=(0, 5))
         expiry_entry = DateEntry(main_frame, width=30, background='darkgreen',
-                                foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+                                 foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
         expiry_entry.pack(fill=tk.X, pady=(0, 20))
         
         def save():
@@ -1045,35 +1079,25 @@ class CRMApp:
             land_type = type_var.get()
             mandate = mandate_var.get()
             expiry = expiry_entry.get_date().strftime("%Y-%m-%d") if mandate else ""
-            
             if not erf:
                 messagebox.showerror("Error", "ERF Number is required.")
                 return
-                
             try:
                 self.db.add_property(self.current_customer_id, erf, land_type, mandate, expiry)
-                self.refresh_property_list()
+                # Refresh the main tree too
+                self.refresh_customer_list()
                 dialog.destroy()
+                if callback:
+                    callback()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to add property: {e}")
         
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="Save", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Save",   command=save).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
 
-    def manual_remove_property(self):
-        """Remove selected property"""
-        selected = self.property_tree.selection()
-        if not selected:
-            messagebox.showwarning("Warning", "Please select a property to remove.")
-            return
-            
-        if messagebox.askyesno("Confirm", "Are you sure you want to remove this property?"):
-            for item_id in selected:
-                prop_id = int(item_id)
-                self.db.delete_property(prop_id)
-            self.refresh_property_list()
+
 
     def run(self):
         """Start the application"""
