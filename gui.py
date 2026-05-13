@@ -1094,8 +1094,8 @@ class CRMApp:
         
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="➕ Add Property", command=save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="✖ Cancel",        command=dialog.destroy).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Add Property", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel",       command=dialog.destroy).pack(side=tk.LEFT)
 
 
 
