@@ -475,8 +475,8 @@ class CRMApp:
             except ValueError as exc:
                 messagebox.showerror("Error", str(exc), parent=dialog)
 
-        ttk.Button(footer, text="💾 Save",   command=_save).pack(side=tk.RIGHT, padx=(4, 0))
-        ttk.Button(footer, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(footer, text="💾 Save Changes", command=_save).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(footer, text="✖ Discard & Close", command=dialog.destroy).pack(side=tk.RIGHT)
 
     def add_customer(self):
         """Show dialog to add a new customer"""
@@ -1094,8 +1094,8 @@ class CRMApp:
         
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="Save",   command=save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="➕ Add Property", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="✖ Cancel",        command=dialog.destroy).pack(side=tk.LEFT)
 
 
 
