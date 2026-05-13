@@ -10,6 +10,7 @@ from tkcalendar import DateEntry
 from datetime import datetime
 from typing import Optional
 import threading
+import sv_ttk
 
 
 class CRMApp:
@@ -51,22 +52,13 @@ class CRMApp:
     
     def setup_styles(self):
         """Configure ttk styles"""
+        # Apply the Sun Valley theme (Dark mode)
+        sv_ttk.set_theme("dark")
+        
         style = ttk.Style()
-        style.theme_use('clam')
-        
-        # Configure colors
-        bg_color = "#f0f0f0"
-        fg_color = "#333333"
-        accent_color = "#4CAF50"
-        
-        style.configure("TFrame", background=bg_color)
-        style.configure("TLabel", background=bg_color, foreground=fg_color)
-        style.configure("TButton", background=accent_color, foreground="white")
-        style.map("TButton", background=[("active", "#45a049")])
-        
         # Custom styles
-        style.configure("Title.TLabel", font=("Arial", 16, "bold"))
-        style.configure("Subtitle.TLabel", font=("Arial", 10))
+        style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"))
+        style.configure("Subtitle.TLabel", font=("Segoe UI", 10))
     
     def create_menu(self):
         """Create menu bar"""
