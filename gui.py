@@ -10,6 +10,7 @@ from tkcalendar import DateEntry
 from datetime import datetime
 from typing import Optional
 import threading
+import sv_ttk
 
 
 class CRMApp:
@@ -30,6 +31,7 @@ class CRMApp:
         
         # Current customer selection
         self.selected_customer_id = None
+        self.current_customer_id = None
         
         # Create UI
         self.create_menu()
@@ -38,30 +40,25 @@ class CRMApp:
         # Load initial data
         self.refresh_customer_list()
         
-        # Start birthday scheduler
+        # Start birthday scheduler and register alert callback
+        self.scheduler.on_birthdays_found = self._on_birthday_alert
         self.scheduler.start()
+        
+        # Check birthdays on startup (runs once per day)
+        self.root.after(1500, self._run_startup_birthday_check)
         
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def setup_styles(self):
         """Configure ttk styles"""
+        # Apply the Sun Valley theme (Dark mode)
+        sv_ttk.set_theme("dark")
+        
         style = ttk.Style()
-        style.theme_use('clam')
-        
-        # Configure colors
-        bg_color = "#f0f0f0"
-        fg_color = "#333333"
-        accent_color = "#4CAF50"
-        
-        style.configure("TFrame", background=bg_color)
-        style.configure("TLabel", background=bg_color, foreground=fg_color)
-        style.configure("TButton", background=accent_color, foreground="white")
-        style.map("TButton", background=[("active", "#45a049")])
-        
         # Custom styles
-        style.configure("Title.TLabel", font=("Arial", 16, "bold"))
-        style.configure("Subtitle.TLabel", font=("Arial", 10))
+        style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"))
+        style.configure("Subtitle.TLabel", font=("Segoe UI", 10))
     
     def create_menu(self):
         """Create menu bar"""
@@ -82,8 +79,7 @@ class CRMApp:
         tools_menu.add_command(label="Email Settings", command=self.show_email_settings)
         tools_menu.add_command(label="Send Test Email", command=self.send_test_email)
         tools_menu.add_separator()
-        tools_menu.add_command(label="Edit Birthday Template", command=self.show_birthday_template_editor)
-        tools_menu.add_command(label="Send Birthday Emails", command=self.manual_birthday_check)
+        tools_menu.add_command(label="🎂 Check Today's Birthdays", command=self.manual_birthday_check)
         tools_menu.add_separator()
         tools_menu.add_command(label="Check Mandates", command=self.manual_mandate_check)
         
@@ -209,24 +205,54 @@ class CRMApp:
         ttk.Entry(details_frame, textvariable=self.phone_var, width=40).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         row += 1
         
-        # Mandate
-        ttk.Label(details_frame, text="Mandate:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.mandate_var = tk.IntVar()
-        ttk.Checkbutton(details_frame, text="Active", variable=self.mandate_var).grid(row=row, column=1, sticky=tk.W, pady=5, padx=5)
-        row += 1
-        
-        # Mandate Expiry
-        ttk.Label(details_frame, text="Mandate Expiry:").grid(row=row, column=0, sticky=tk.W, pady=5, padx=5)
-        self.mandate_expiry_entry = DateEntry(details_frame, width=37, background='darkgreen',
-                                       foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
-        self.mandate_expiry_entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        row += 1
-        
         # Notes
         ttk.Label(details_frame, text="Notes:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5, padx=5)
         self.notes_text = tk.Text(details_frame, width=40, height=8, wrap=tk.WORD)
         self.notes_text.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=5)
         details_frame.rowconfigure(row, weight=1)
+        row += 1
+        ttk.Label(details_frame, text="Notes:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5, padx=5)
+        self.notes_text = tk.Text(details_frame, width=40, height=8, wrap=tk.WORD)
+        self.notes_text.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5, padx=5)
+        details_frame.rowconfigure(row, weight=1)
+        row += 1
+        
+        # Properties Section
+        ttk.Label(details_frame, text="Properties:", font=("Arial", 10, "bold")).grid(row=row, column=0, sticky=tk.W, pady=(10, 5), padx=5)
+        row += 1
+        
+        prop_container = ttk.Frame(details_frame)
+        prop_container.grid(row=row, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
+        
+        prop_columns = ("ERF", "Type", "Mandate", "Expiry")
+        self.property_tree = ttk.Treeview(prop_container, columns=prop_columns, show="headings", height=4)
+        self.property_tree.heading("ERF", text="ERF Number")
+        self.property_tree.heading("Type", text="Land Type")
+        self.property_tree.heading("Mandate", text="Mandate")
+        self.property_tree.heading("Expiry", text="Expiry")
+        self.property_tree.column("ERF", width=100)
+        self.property_tree.column("Type", width=100)
+        self.property_tree.column("Mandate", width=80)
+        self.property_tree.column("Expiry", width=100)
+        
+        prop_scroll = ttk.Scrollbar(prop_container, orient=tk.VERTICAL, command=self.property_tree.yview)
+        self.property_tree.configure(yscrollcommand=prop_scroll.set)
+        
+        self.property_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        prop_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        row += 1
+        
+        prop_btn_frame = ttk.Frame(details_frame)
+        prop_btn_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5, padx=5)
+        
+        self.add_prop_btn = ttk.Button(prop_btn_frame, text="➕ Add Property", command=self.manual_add_property)
+        self.add_prop_btn.pack(side=tk.LEFT, padx=2)
+        self.remove_prop_btn = ttk.Button(prop_btn_frame, text="🗑️ Remove Property", command=self.manual_remove_property)
+        self.remove_prop_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Set buttons state initially (disabled until a customer is selected)
+        self.add_prop_btn.config(state=tk.DISABLED)
+        self.remove_prop_btn.config(state=tk.DISABLED)
         row += 1
         
         # Buttons
@@ -304,7 +330,6 @@ class CRMApp:
         self.surname_var.set(customer.get('surname', ''))
         self.email_var.set(customer['email'])
         self.phone_var.set(customer['phone'] or "")
-        self.mandate_var.set(customer.get('mandate', 0))
         
         if customer['birthday']:
             try:
@@ -312,17 +337,17 @@ class CRMApp:
             except:
                 pass
         
-        if customer.get('mandate_expiry'):
-            try:
-                self.mandate_expiry_entry.set_date(datetime.strptime(customer['mandate_expiry'], "%Y-%m-%d"))
-            except:
-                pass
-        else:
-            self.mandate_expiry_entry.set_date(datetime.now())
-        
         self.notes_text.delete("1.0", tk.END)
         if customer['notes']:
             self.notes_text.insert("1.0", customer['notes'])
+        
+        # Load Properties
+        self.current_customer_id = customer['id']
+        self.refresh_property_list()
+        
+        # Enable property buttons
+        self.add_prop_btn.config(state=tk.NORMAL)
+        self.remove_prop_btn.config(state=tk.NORMAL)
     
     def clear_form(self):
         """Clear the customer form"""
@@ -331,10 +356,17 @@ class CRMApp:
         self.surname_var.set("")
         self.email_var.set("")
         self.phone_var.set("")
-        self.mandate_var.set(0)
         self.birthday_entry.set_date(datetime.now())
-        self.mandate_expiry_entry.set_date(datetime.now())
         self.notes_text.delete("1.0", tk.END)
+        
+        # Properties
+        for item in self.property_tree.get_children():
+            self.property_tree.delete(item)
+        
+        self.current_customer_id = None
+        self.add_prop_btn.config(state=tk.DISABLED)
+        self.remove_prop_btn.config(state=tk.DISABLED)
+        
         self.set_status("Form cleared")
     
     def add_customer(self):
@@ -369,21 +401,17 @@ class CRMApp:
         birthday = self.birthday_entry.get_date().strftime("%Y-%m-%d")
         phone = self.phone_var.get().strip()
         notes = self.notes_text.get("1.0", tk.END).strip()
-        mandate = self.mandate_var.get()
-        mandate_expiry = self.mandate_expiry_entry.get_date().strftime("%Y-%m-%d") if mandate else None
         
         try:
             if self.selected_customer_id:
                 # Update existing
                 self.db.update_customer(self.selected_customer_id, first_name=first_name, surname=surname, 
-                                      email=email, birthday=birthday, phone=phone, notes=notes,
-                                      mandate=mandate, mandate_expiry=mandate_expiry)
+                                      email=email, birthday=birthday, phone=phone, notes=notes)
                 messagebox.showinfo("Success", "Customer updated successfully")
                 self.set_status(f"Updated: {first_name} {surname}")
             else:
                 # Add new
-                customer_id = self.db.add_customer(first_name, surname, email, birthday, phone, notes,
-                                                 mandate, mandate_expiry)
+                customer_id = self.db.add_customer(first_name, surname, email, birthday, phone, notes)
                 self.selected_customer_id = customer_id
                 messagebox.showinfo("Success", "Customer added successfully")
                 self.set_status(f"Added: {first_name} {surname}")
@@ -604,48 +632,161 @@ class CRMApp:
         ttk.Button(button_frame, text="💾 Save Template", command=save).pack(side=tk.LEFT, padx=10)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=10)
 
+    def _run_startup_birthday_check(self):
+        """Run birthday check once on startup (non-blocking)"""
+        threading.Thread(
+            target=self.scheduler.check_birthdays_today,
+            daemon=True
+        ).start()
+
+    def _on_birthday_alert(self, customers: list):
+        """Called by scheduler (background thread) when birthdays are found today."""
+        # Marshal to main thread
+        self.root.after(0, lambda: self.show_birthday_alert_dialog(customers))
+
     def manual_birthday_check(self):
-        """Manually trigger birthday check with interactive confirmation"""
+        """Manually trigger today's birthday check and show the alert dialog"""
         customers = self.scheduler.get_todays_birthdays()
-        
         if not customers:
-            messagebox.showinfo("Birthday Check", "No birthdays found for today.")
+            messagebox.showinfo("Birthday Check", "No birthdays today. 🎂")
             return
-            
-        # Create confirmation list
-        names = [f"{c['first_name']} {c['surname']}" for c in customers]
-        confirm_msg = f"Found {len(customers)} birthday(s) today:\n\n"
-        confirm_msg += "\n".join(f"• {name}" for name in names)
-        confirm_msg += "\n\nDo you want to send birthday emails to these people?"
+        self.show_birthday_alert_dialog(customers)
+
+    def show_birthday_alert_dialog(self, customers: list):
+        """Show a birthday alert dialog listing each person, with a Compose Email button."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🎂 Birthday Alerts")
+        dialog.geometry("480x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(True, True)
         
-        if messagebox.askyesno("Confirm Birthday Emails", confirm_msg):
-            def send():
-                # Use the interactive check results
-                results = self.scheduler.check_and_send_birthday_emails(customers_to_send=customers)
-                
-                msg = f"Birthday Check Complete:\n\n"
-                msg += f"Emails sent: {results['sent']}\n"
-                msg += f"Failed: {results['failed']}\n\n"
-                
-                if results['customers']:
-                    msg += "Details:\n"
-                    for customer in results['customers']:
-                        status = "[OK]" if customer['success'] else "[X]"
-                        msg += f"{status} {customer['name']}: {customer['message']}\n"
-                
-                # Show results on main thread
-                self.root.after(0, lambda: messagebox.showinfo("Birthday Check Results", msg))
-            
-            # Run in thread to avoid blocking UI
-            threading.Thread(target=send, daemon=True).start()
+        # Centre on screen
+        dialog.geometry("+%d+%d" % (
+            self.root.winfo_rootx() + 150,
+            self.root.winfo_rooty() + 80
+        ))
+
+        # Header
+        header_frame = ttk.Frame(dialog, padding="10 10 10 0")
+        header_frame.pack(fill=tk.X)
+        ttk.Label(
+            header_frame,
+            text=f"🎂  {len(customers)} Birthday{'s' if len(customers) != 1 else ''} Today!",
+            style="Title.TLabel"
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            header_frame,
+            text="Choose who to email and personalise each message before sending.",
+            style="Subtitle.TLabel",
+            foreground="#555"
+        ).pack(anchor=tk.W, pady=(2, 8))
+        ttk.Separator(dialog, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10)
+
+        # Scrollable list of people
+        canvas_frame = ttk.Frame(dialog, padding="10 5")
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for customer in customers:
+            first = customer.get('first_name', '')
+            sur = customer.get('surname', '')
+            email_addr = customer.get('email', 'No email')
+            full_name = f"{first} {sur}".strip()
+
+            row = ttk.Frame(inner, padding="5 6")
+            row.pack(fill=tk.X, pady=2)
+
+            # Name + email info
+            info_frame = ttk.Frame(row)
+            info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Label(info_frame, text=f"🎂  {full_name}", font=("Arial", 10, "bold")).pack(anchor=tk.W)
+            ttk.Label(info_frame, text=email_addr, foreground="#555", font=("Arial", 9)).pack(anchor=tk.W)
+
+            # Compose button (capture customer in default arg)
+            ttk.Button(
+                row,
+                text="✉ Compose Email",
+                command=lambda c=customer: self._open_birthday_composer(c)
+            ).pack(side=tk.RIGHT, padx=5)
+
+            ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
+
+        # Footer
+        ttk.Separator(dialog, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10)
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+
+    def _open_birthday_composer(self, customer):
+        """Open the email composer pre-populated with a birthday greeting."""
+        first_name = customer.get('first_name', 'there')
+        surname = customer.get('surname', '')
+        full_name = f"{first_name} {surname}".strip()
+        email_addr = customer.get('email', '')
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"🎂 Birthday Email — {full_name}")
+        dialog.geometry("620x520")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=f"To: {full_name} <{email_addr}>",
+                  foreground="#444").pack(pady=(12, 2), padx=15, anchor=tk.W)
+
+        ttk.Label(dialog, text="Subject:").pack(pady=(8, 2), padx=15, anchor=tk.W)
+        subject_var = tk.StringVar(value=f"Happy Birthday, {first_name}! 🎂")
+        ttk.Entry(dialog, textvariable=subject_var, width=75).pack(pady=(0, 8), padx=15, fill=tk.X)
+
+        ttk.Label(dialog, text="Message:").pack(pady=(0, 2), padx=15, anchor=tk.W)
+        body_text = tk.Text(dialog, width=75, height=16, wrap=tk.WORD, font=("Arial", 10))
+        body_text.pack(pady=(0, 8), padx=15, fill=tk.BOTH, expand=True)
+
+        # Pre-populate with a simple, editable greeting
+        default_body = (
+            f"Dear {first_name},\n\n"
+            f"Wishing you a very happy birthday! 🎉\n\n"
+            f"Best regards,"
+        )
+        body_text.insert("1.0", default_body)
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=10)
+
+        def send():
+            subject = subject_var.get().strip()
+            body = body_text.get("1.0", tk.END).strip()
+            if not subject or not body:
+                messagebox.showerror("Error", "Subject and message are required")
+                return
+            success, message = self.email.send_email(email_addr, subject, body)
+            if success:
+                messagebox.showinfo("Sent", f"Birthday email sent to {full_name}!")
+                dialog.destroy()
+            else:
+                messagebox.showerror("Error", message)
+
+        ttk.Button(button_frame, text="📤 Send", command=send).pack(side=tk.LEFT, padx=8)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=8)
 
     def check_expiring_mandates_startup(self):
         """Check for expiring mandates on startup and notify if found"""
         expiring = self.db.get_expiring_mandates(2) # 2 months
         if expiring:
-            msg = f"Attention: {len(expiring)} mandate(s) are expiring within the next 2 months:\n\n"
-            for c in expiring:
-                msg += f"• {c['first_name']} {c['surname']} (Expires: {c['mandate_expiry']})\n"
+            msg = f"Attention: {len(expiring)} property mandate(s) are expiring within the next 2 months:\n\n"
+            for p in expiring:
+                msg += f"• {p['first_name']} {p['surname']} - ERF: {p['erf_number']} (Expires: {p['mandate_expiry']})\n"
             msg += "\nWould you like to view the mandate management tool?"
             
             if messagebox.askyesno("Expiring Mandates", msg):
@@ -666,15 +807,17 @@ class CRMApp:
         frame.pack(fill=tk.BOTH, expand=True)
         
         # Treeview for mandates
-        columns = ("Name", "Expiry", "Status")
+        columns = ("Name", "ERF", "Expiry", "Status")
         tree = ttk.Treeview(frame, columns=columns, show="headings")
         tree.heading("Name", text="Customer Name")
+        tree.heading("ERF", text="ERF Number")
         tree.heading("Expiry", text="Expiry Date")
         tree.heading("Status", text="Status")
         
-        tree.column("Name", width=250)
-        tree.column("Expiry", width=150)
-        tree.column("Status", width=150)
+        tree.column("Name", width=150)
+        tree.column("ERF", width=100)
+        tree.column("Expiry", width=100)
+        tree.column("Status", width=100)
         
         scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
@@ -684,15 +827,18 @@ class CRMApp:
         
         # Load data
         all_active = self.db.get_valid_mandates()
-        expiring_ids = [c['id'] for c in self.db.get_expiring_mandates(2)]
+        # Use property IDs to identify expiring ones
+        expiring_props = self.db.get_expiring_mandates(2)
+        expiring_ids = [p['id'] for p in expiring_props]
         
-        for c in all_active:
-            name = f"{c['first_name']} {c['surname']}"
-            expiry = c['mandate_expiry'] or "N/A"
-            status = "Expiring Soon!" if c['id'] in expiring_ids else "Valid"
+        for p in all_active:
+            name = f"{p['first_name']} {p['surname']}"
+            erf = p['erf_number']
+            expiry = p['mandate_expiry'] or "N/A"
+            status = "Expiring Soon!" if p['id'] in expiring_ids else "Valid"
             
-            item = tree.insert("", tk.END, values=(name, expiry, status))
-            if c['id'] in expiring_ids:
+            item = tree.insert("", tk.END, values=(name, erf, expiry, status))
+            if p['id'] in expiring_ids:
                 tree.item(item, tags=('expiring',))
         
         tree.tag_configure('expiring', foreground='red')
@@ -731,9 +877,9 @@ class CRMApp:
     def update_scheduler_status(self):
         """Update scheduler status in status bar"""
         if self.scheduler.enabled:
-            status = f"🎂 Birthday emails: ON (Check at {self.scheduler.check_time})"
+            status = f"🎂 Birthday alerts: ON (Check at {self.scheduler.check_time})"
         else:
-            status = "🎂 Birthday emails: OFF"
+            status = "🎂 Birthday alerts: OFF"
         
         self.scheduler_status_var.set(status)
         
@@ -763,6 +909,90 @@ class CRMApp:
             self.db.close()
             self.root.destroy()
     
+    def refresh_property_list(self):
+        """Refresh the property tree for the current customer"""
+        for item in self.property_tree.get_children():
+            self.property_tree.delete(item)
+            
+        if self.current_customer_id:
+            properties = self.db.get_properties(self.current_customer_id)
+            for prop in properties:
+                mandate_str = "Yes" if prop['mandate'] else "No"
+                expiry_str = prop['mandate_expiry'] if prop['mandate'] and prop['mandate_expiry'] else "-"
+                self.property_tree.insert("", tk.END, iid=prop['id'], values=(prop['erf_number'], prop['land_type'], mandate_str, expiry_str))
+
+    def manual_add_property(self):
+        """Show dialog to add a property"""
+        if not self.current_customer_id:
+            messagebox.showwarning("Warning", "Please select a customer first.")
+            return
+            
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Property")
+        dialog.geometry("350x250")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Form
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main_frame, text="ERF Number:").pack(anchor=tk.W, pady=(0, 5))
+        erf_var = tk.StringVar()
+        erf_entry = ttk.Entry(main_frame, textvariable=erf_var, width=30)
+        erf_entry.pack(fill=tk.X, pady=(0, 15))
+        erf_entry.focus_set()
+        
+        ttk.Label(main_frame, text="Land Type:").pack(anchor=tk.W, pady=(0, 5))
+        type_var = tk.StringVar(value="Residential")
+        type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=["Vacant", "Residential", "Agricultural", "Industrial"], state="readonly")
+        type_combo.pack(fill=tk.X, pady=(0, 15))
+        
+        # Mandate fields
+        mandate_var = tk.IntVar(value=0)
+        mandate_cb = ttk.Checkbutton(main_frame, text="Active Mandate", variable=mandate_var)
+        mandate_cb.pack(anchor=tk.W, pady=(0, 5))
+        
+        ttk.Label(main_frame, text="Mandate Expiry:").pack(anchor=tk.W, pady=(0, 5))
+        expiry_entry = DateEntry(main_frame, width=30, background='darkgreen',
+                                foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+        expiry_entry.pack(fill=tk.X, pady=(0, 20))
+        
+        def save():
+            erf = erf_var.get().strip()
+            land_type = type_var.get()
+            mandate = mandate_var.get()
+            expiry = expiry_entry.get_date().strftime("%Y-%m-%d") if mandate else ""
+            
+            if not erf:
+                messagebox.showerror("Error", "ERF Number is required.")
+                return
+                
+            try:
+                self.db.add_property(self.current_customer_id, erf, land_type, mandate, expiry)
+                self.refresh_property_list()
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to add property: {e}")
+        
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X)
+        ttk.Button(btn_frame, text="Save", command=save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+
+    def manual_remove_property(self):
+        """Remove selected property"""
+        selected = self.property_tree.selection()
+        if not selected:
+            messagebox.showwarning("Warning", "Please select a property to remove.")
+            return
+            
+        if messagebox.askyesno("Confirm", "Are you sure you want to remove this property?"):
+            for item_id in selected:
+                prop_id = int(item_id)
+                self.db.delete_property(prop_id)
+            self.refresh_property_list()
+
     def run(self):
         """Start the application"""
         self.root.mainloop()

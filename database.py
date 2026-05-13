@@ -40,10 +40,21 @@ class Database:
                     birthday TEXT,
                     phone TEXT,
                     notes TEXT,
-                    mandate INTEGER DEFAULT 0,
-                    mandate_expiry TEXT,
                     created_date TEXT NOT NULL,
                     modified_date TEXT NOT NULL
+                )
+            ''')
+            self.conn.commit()
+            
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS properties (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_id INTEGER NOT NULL,
+                    erf_number TEXT NOT NULL,
+                    land_type TEXT NOT NULL,
+                    mandate INTEGER DEFAULT 0,
+                    mandate_expiry TEXT,
+                    FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE
                 )
             ''')
             self.conn.commit()
@@ -72,8 +83,6 @@ class Database:
                     birthday TEXT,
                     phone TEXT,
                     notes TEXT,
-                    mandate INTEGER DEFAULT 0,
-                    mandate_expiry TEXT,
                     created_date TEXT NOT NULL,
                     modified_date TEXT NOT NULL
                 )
@@ -107,15 +116,64 @@ class Database:
         # Ensure mandate columns exist (for cases where first_name already existed but mandate didn't)
         self.cursor.execute("PRAGMA table_info(customers)")
         columns = [row[1] for row in self.cursor.fetchall()]
-        if 'mandate' not in columns:
-            print("Adding mandate columns...")
-            self.cursor.execute("ALTER TABLE customers ADD COLUMN mandate INTEGER DEFAULT 0")
-            self.cursor.execute("ALTER TABLE customers ADD COLUMN mandate_expiry TEXT")
+        if 'mandate' in columns:
+            print("Cleaning up legacy mandate columns from customers table...")
+            # We already handle splitting name, if we are here and 'mandate' is in columns, we should move it to properties
+            # but usually this migration happens after name split. 
+            # In a real app we'd do a complex migration. For now we will ensure properties has the columns.
+            pass
+            
+        # Ensure properties table exists with mandate columns
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='properties'")
+        if self.cursor.fetchone():
+            self.cursor.execute("PRAGMA table_info(properties)")
+            prop_columns = [row[1] for row in self.cursor.fetchall()]
+            if 'mandate' not in prop_columns:
+                print("Adding mandate columns to properties table...")
+                self.cursor.execute("ALTER TABLE properties ADD COLUMN mandate INTEGER DEFAULT 0")
+                self.cursor.execute("ALTER TABLE properties ADD COLUMN mandate_expiry TEXT")
+                self.conn.commit()
+        else:
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS properties (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_id INTEGER NOT NULL,
+                    erf_number TEXT NOT NULL,
+                    land_type TEXT NOT NULL,
+                    mandate INTEGER DEFAULT 0,
+                    mandate_expiry TEXT,
+                    FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE
+                )
+            ''')
+            self.conn.commit()
+            
+        # Migration: Move mandate data from customers to properties if any exists
+        self.cursor.execute("PRAGMA table_info(customers)")
+        cust_columns = [row[1] for row in self.cursor.fetchall()]
+        if 'mandate' in cust_columns:
+            print("Checking for mandate data to migrate from customers to properties...")
+            self.cursor.execute("SELECT id, mandate, mandate_expiry FROM customers WHERE mandate = 1")
+            legacy_found = self.cursor.fetchall()
+            for row in legacy_found:
+                cust_id, mandate, expiry = row
+                # Check if this customer already has properties
+                self.cursor.execute("SELECT id FROM properties WHERE customer_id = ?", (cust_id,))
+                prop = self.cursor.fetchone()
+                if prop:
+                    # Update first property
+                    self.cursor.execute("UPDATE properties SET mandate = ?, mandate_expiry = ? WHERE id = ?", (mandate, expiry, prop[0]))
+                else:
+                    # Create a "Legacy Property" entry
+                    self.cursor.execute('''
+                        INSERT INTO properties (customer_id, erf_number, land_type, mandate, mandate_expiry)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (cust_id, "LEGACY-MIGRATED", "Other", mandate, expiry))
+            
+            # We don't drop columns in SQLite easily, but we'll stop using them.
             self.conn.commit()
     
     def add_customer(self, first_name: str, surname: str, email: str, birthday: str = None, 
-                    phone: str = None, notes: str = None, mandate: int = 0, 
-                    mandate_expiry: str = None) -> int:
+                    phone: str = None, notes: str = None) -> int:
         """
         Add a new customer to the database
         
@@ -126,8 +184,6 @@ class Database:
             birthday: Birthday in YYYY-MM-DD format
             phone: Phone number
             notes: Additional notes
-            mandate: 1 if active, 0 otherwise
-            mandate_expiry: Expiry date in YYYY-MM-DD format
             
         Returns:
             Customer ID of newly created customer
@@ -136,9 +192,9 @@ class Database:
         
         try:
             self.cursor.execute('''
-                INSERT INTO customers (first_name, surname, email, birthday, phone, notes, mandate, mandate_expiry, created_date, modified_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (first_name, surname, email, birthday, phone, notes, mandate, mandate_expiry, now, now))
+                INSERT INTO customers (first_name, surname, email, birthday, phone, notes, created_date, modified_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (first_name, surname, email, birthday, phone, notes, now, now))
             self.conn.commit()
             return self.cursor.lastrowid
         except sqlite3.IntegrityError:
@@ -157,13 +213,13 @@ class Database:
     
     def update_customer(self, customer_id: int, first_name: str = None, surname: str = None, 
                        email: str = None, birthday: str = None, phone: str = None, 
-                       notes: str = None, mandate: int = None, mandate_expiry: str = None) -> bool:
+                       notes: str = None) -> bool:
         """
         Update customer information
         
         Args:
             customer_id: ID of customer to update
-            first_name, surname, email, birthday, phone, notes, mandate, mandate_expiry: Fields to update (None = no change)
+            first_name, surname, email, birthday, phone, notes: Fields to update (None = no change)
             
         Returns:
             True if customer was updated, False if not found
@@ -180,27 +236,48 @@ class Database:
         updated_birthday = birthday if birthday is not None else customer['birthday']
         updated_phone = phone if phone is not None else customer['phone']
         updated_notes = notes if notes is not None else customer['notes']
-        updated_mandate = mandate if mandate is not None else customer['mandate']
-        updated_mandate_expiry = mandate_expiry if mandate_expiry is not None else customer['mandate_expiry']
         modified_date = datetime.now().isoformat()
         
         try:
             self.cursor.execute('''
                 UPDATE customers 
                 SET first_name = ?, surname = ?, email = ?, birthday = ?, phone = ?, notes = ?, 
-                    mandate = ?, mandate_expiry = ?, modified_date = ?
+                    modified_date = ?
                 WHERE id = ?
             ''', (updated_first_name, updated_surname, updated_email, updated_birthday, 
-                  updated_phone, updated_notes, updated_mandate, updated_mandate_expiry, 
-                  modified_date, customer_id))
+                  updated_phone, updated_notes, modified_date, customer_id))
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
             raise ValueError(f"Customer with email '{updated_email}' already exists")
     
     def delete_customer(self, customer_id: int) -> bool:
-        """Delete a customer by ID"""
+        """Delete a customer and their properties (CASCADE handles this if PRAGMA foreign_keys=ON)"""
+        # Ensure foreign keys are enabled for cascade delete
+        self.cursor.execute('PRAGMA foreign_keys = ON')
         self.cursor.execute('DELETE FROM customers WHERE id = ?', (customer_id,))
+        self.conn.commit()
+        return self.cursor.rowcount > 0
+    
+    # Property Methods
+    
+    def add_property(self, customer_id: int, erf_number: str, land_type: str, mandate: int = 0, mandate_expiry: str = None) -> int:
+        """Add a property to a customer"""
+        self.cursor.execute('''
+            INSERT INTO properties (customer_id, erf_number, land_type, mandate, mandate_expiry)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (customer_id, erf_number, land_type, mandate, mandate_expiry))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_properties(self, customer_id: int) -> List[Dict]:
+        """Get all properties for a customer"""
+        self.cursor.execute('SELECT * FROM properties WHERE customer_id = ?', (customer_id,))
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    def delete_property(self, property_id: int) -> bool:
+        """Delete a property by ID"""
+        self.cursor.execute('DELETE FROM properties WHERE id = ?', (property_id,))
         self.conn.commit()
         return self.cursor.rowcount > 0
     
@@ -215,25 +292,33 @@ class Database:
         return [dict(row) for row in self.cursor.fetchall()]
     
     def get_valid_mandates(self) -> List[Dict]:
-        """Get all customers with an active mandate"""
-        self.cursor.execute('SELECT * FROM customers WHERE mandate = 1 ORDER BY surname, first_name')
+        """Get all properties with an active mandate, including client names"""
+        self.cursor.execute('''
+            SELECT c.first_name, c.surname, p.* 
+            FROM properties p
+            JOIN customers c ON p.customer_id = c.id
+            WHERE p.mandate = 1 
+            ORDER BY c.surname, c.first_name
+        ''')
         return [dict(row) for row in self.cursor.fetchall()]
     
     def get_expiring_mandates(self, months: int = 2) -> List[Dict]:
-        """Get customers whose mandate expires within the next N months"""
+        """Get properties whose mandate expires within the next N months, including client names"""
         # Calculate cut-off date
         from datetime import timedelta
         cutoff_date = (datetime.now() + timedelta(days=months*30)).strftime("%Y-%m-%d")
         today = datetime.now().strftime("%Y-%m-%d")
         
         self.cursor.execute('''
-            SELECT * FROM customers 
-            WHERE mandate = 1 
-            AND mandate_expiry IS NOT NULL 
-            AND mandate_expiry != ''
-            AND mandate_expiry <= ?
-            AND mandate_expiry >= ?
-            ORDER BY mandate_expiry
+            SELECT c.first_name, c.surname, p.* 
+            FROM properties p
+            JOIN customers c ON p.customer_id = c.id
+            WHERE p.mandate = 1 
+            AND p.mandate_expiry IS NOT NULL 
+            AND p.mandate_expiry != ''
+            AND p.mandate_expiry <= ?
+            AND p.mandate_expiry >= ?
+            ORDER BY p.mandate_expiry
         ''', (cutoff_date, today))
         return [dict(row) for row in self.cursor.fetchall()]
     
@@ -325,19 +410,18 @@ def test_crud():
     db = Database(db_path)
     
     # Add customers
-    id1 = db.add_customer("John", "Doe", "john@example.com", "1990-05-15", "555-1234", "VIP customer", 1, "2025-01-01")
+    id1 = db.add_customer("John", "Doe", "john@example.com", "1990-05-15", "555-1234", "VIP customer")
     id2 = db.add_customer("Jane", "Smith", "jane@example.com", "1985-03-22", "555-5678")
     print(f"[OK] Added customers with IDs: {id1}, {id2}")
     
     # Get customer
     customer = db.get_customer(id1)
     print(f"[OK] Retrieved customer: {customer['first_name']} {customer['surname']}")
-    print(f"[OK] Mandate: {customer['mandate']}, Expiry: {customer['mandate_expiry']}")
     
     # Update customer
-    db.update_customer(id1, phone="555-9999", mandate=0)
+    db.update_customer(id1, phone="555-9999")
     updated = db.get_customer(id1)
-    print(f"[OK] Updated phone: {updated['phone']}, Updated Mandate: {updated['mandate']}")
+    print(f"[OK] Updated phone: {updated['phone']}")
     
     # Search
     results = db.search_customers("John")
@@ -347,12 +431,37 @@ def test_crud():
     all_customers = db.get_all_customers()
     print(f"[OK] Total customers: {len(all_customers)}")
     
+    # Test Properties
+    # 3-month expiry test case
+    from datetime import timedelta
+    three_months = (datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d")
+    one_month = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+
+    prop_id1 = db.add_property(id1, "ERF123", "Residential", 1, one_month)
+    prop_id2 = db.add_property(id1, "ERF456", "Vacant", 1, three_months)
+    print(f"[OK] Added properties with IDs: {prop_id1}, {prop_id2}")
+    
     # Test Mandate Queries
     valid_mandates = db.get_valid_mandates()
     print(f"[OK] Valid mandates found: {len(valid_mandates)}")
+    assert len(valid_mandates) == 2
     
-    expiring = db.get_expiring_mandates(3)
-    print(f"[OK] Expiring mandates (3 months) found: {len(expiring)}")
+    expiring_2m = db.get_expiring_mandates(2)
+    print(f"[OK] Expiring mandates (2 months) found: {len(expiring_2m)}")
+    assert len(expiring_2m) == 1 # Only one_month
+    
+    expiring_3m = db.get_expiring_mandates(3)
+    print(f"[OK] Expiring mandates (3 months) found: {len(expiring_3m)}")
+    assert len(expiring_3m) == 2 # both
+    
+    props = db.get_properties(id1)
+    print(f"[OK] Retrieved {len(props)} properties for customer {id1}")
+    assert len(props) == 2
+    
+    db.delete_property(prop_id2)
+    props = db.get_properties(id1)
+    print(f"[OK] Total properties after deletion: {len(props)}")
+    assert len(props) == 1
     
     # Delete
     db.delete_customer(id2)
